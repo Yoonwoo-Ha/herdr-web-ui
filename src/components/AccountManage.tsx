@@ -1,7 +1,10 @@
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 
 import type { PairedDevice } from "../../shared/protocol.ts";
 import { removeFromAccount } from "../lib/account/leave.ts";
+import { pagePcs, readPageList } from "../lib/account/listPcs.ts";
+import { holdsList } from "../lib/account/listWrite.ts";
+import { pageAccountList } from "../lib/account/pageList.ts";
 import { ACCOUNT_PCS_CHANGED_EVENT, OFFLINE_AFTER_MS } from "../lib/account/myPcs.ts";
 import { AccountService, type DirectoryPc } from "../lib/account/service.ts";
 import { indexedAccountStore } from "../lib/account/store.ts";
@@ -15,7 +18,7 @@ import { DEVICES_CHANGED_EVENT, inRelayShell } from "../lib/useRelay.ts";
 import { signInOfAccount } from "./AccountPcs.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
 import { StatusDot } from "./StatusDot.tsx";
-import { usePcRemoval } from "./usePcRemoval.tsx";
+import { heldRemoval, pcRemovalFailure, usePcRemoval, type HeldRemoval } from "./usePcRemoval.tsx";
 
 /**
  * Whether `row` can be disconnected from every PC from here: another device of the account, and a
@@ -132,18 +135,34 @@ function AccountPcs({ account, watching }: { readonly account: string; readonly 
   const t = useT();
   const service = useMemo(() => new AccountService({ store: indexedAccountStore }), []);
   const [pcs, setPcs] = useState<readonly DirectoryPc[] | "failed" | null>(null);
-  const [asked, setAsked] = useState<DirectoryPc | null>(null);
-  const removal = usePcRemoval(service, async (serverId) => {
-    // this device's own pairing with the gone PC goes too, so no list here offers it again
-    if (inRelayShell()) await (await loadRelayShell()).forgetSavedPc(serverId).catch(() => undefined);
+  // the PC the question is asked for, with the row of this device's list it was pressed on (null: no list holds it)
+  const [asked, setAsked] = useState<(DirectoryPc & { readonly held: HeldRemoval | null }) | null>(null);
+  const removal = usePcRemoval(service, async (serverId, how) => {
+    // On an account with no list, this device's own pairing with the gone PC goes too, so no list here offers it
+    // again. A device that goes by its account's signed list forgets no pairing here, whichever way the PC left: a
+    // pairing made with the PC itself still opens it, as the question says, and only Forget takes that key away
+    const view = pageAccountList()?.view();
+    const byList = view !== undefined && view.account === account && holdsList(view);
+    if (how === "directory" && !byList && inRelayShell()) await (await loadRelayShell()).forgetSavedPc(serverId).catch(() => undefined);
     window.dispatchEvent(new Event(ACCOUNT_PCS_CHANGED_EVENT));
   });
-  const read = useCallback(() => service.listPcs().then(setPcs, () => setPcs("failed")), [service]);
+  // for a device that is in the account's signed list, the PCs that list holds (listPcs.ts)
+  // (a page that has not read its copy of the list yet reads it first: until a read ends, every row is marked)
+  // Reads overlap (the list moves while the directory is read): only the newest one draws, so an older answer, or an
+  // older failure, never takes the place of a newer one
+  const reads = useRef(0);
+  const read = useCallback(() => {
+    const mine = ++reads.current;
+    return service.listPcs().then(async (listed) => { await readPageList(account); if (mine === reads.current) setPcs(pagePcs(account, listed)); })
+      .catch(() => { if (mine === reads.current) setPcs("failed"); });
+  }, [service, account]);
   useEffect(() => {
     void read();
     const changed = () => { void read(); };
     window.addEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
-    return () => window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
+    // the account's list moved (another device added a PC, or put one out): the rows are drawn again from it
+    const unfollow = pageAccountList()?.subscribe(changed);
+    return () => { window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed); unfollow?.(); };
   }, [read]);
   const now = Date.now();
   return (
@@ -153,14 +172,15 @@ function AccountPcs({ account, watching }: { readonly account: string; readonly 
         {pcs === null ? <li className="account-manage-row account-manage-dim" role="status">{t("Loading…")}</li>
           : pcs === "failed" ? <li className="account-manage-row account-manage-dim" role="alert">{t("PCs could not be loaded.")}</li>
           : pcs.map((pc) => {
-            const off = offlinePc(pc, now);
+            // a PC the list holds that the account service gives no way to: off, as far as this device can tell, and removable
+            const off = offlinePc(pc, now) || (pc.by_list === true && pc.relay === null);
             return (
               <li key={pc.server_id} className="account-manage-row" data-pc-id={pc.server_id}>
                 <StatusDot state={off ? "offline" : "ready"} />
                 <span className="visually-hidden">{off ? t("Offline") : t("Online")}</span>
-                <span className="account-manage-name">{pc.label}</span>
+                <span className="account-manage-name">{pc.label}{pc.not_in_list === true && <span className="settings-hint" data-pc-note=""> · {t("Not in your account's list yet")}</span>}</span>
                 {/* a PC in use lists itself again on its next pull: only an offline one is offered, whatever its age */}
-                {off && !watching && <button type="button" className="btn account-head-btn" data-action="remove-pc" onClick={() => setAsked(pc)}>{t("Remove")}</button>}
+                {off && !watching && <button type="button" className="btn account-head-btn" data-action="remove-pc" onClick={() => setAsked({ ...pc, held: heldRemoval(account, pc.server_id) })}>{t("Remove")}</button>}
               </li>
             );
           })}
@@ -172,9 +192,9 @@ function AccountPcs({ account, watching }: { readonly account: string; readonly 
           confirmLabel={t("Remove")} onClose={() => setAsked(null)}
           onConfirm={async () => {
             // a removal that wants a fresh sign-in first closes the question: its Sign in again, below the list, removes it
-            try { await removal.remove(await signInOfAccount(service, account), asked.server_id); } catch (error) {
+            try { await removal.remove(await signInOfAccount(service, account), asked.server_id, undefined, asked.held); } catch (error) {
               console.warn("Ovis: the PC was not removed from the account", error instanceof Error ? error.name : error);
-              throw new Error(t("{name} could not be removed. Try again.", { name: asked.label }));
+              throw new Error(pcRemovalFailure(error, t, t("{name} could not be removed. Try again.", { name: asked.label })));
             }
             setAsked(null);
           }} />

@@ -117,6 +117,7 @@ export const CHAT_JA: Record<string, string> = {
   "Ran in terminal": "ターミナルで実行済み",
   "Open Terminal": "ターミナルを開く",
   "Background result delivered": "バックグラウンドの結果が届きました",
+  "Stopped|chat": "停止しました",
   "Background task ended": "バックグラウンドタスクが終了しました",
   "Goal continues": "目標の作業を再開",
   "background work": "バックグラウンド作業",

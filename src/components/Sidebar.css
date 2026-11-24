@@ -746,6 +746,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
   }
 }
 
+.workspace-header:has(.workspace-rename-input) > .workspace-actions {
+  display: none;
+}
+
 @media (pointer: coarse), (max-width: 768px) {
   .workspace-group.is-selected > .workspace-header > .workspace-actions {
     width: auto;
@@ -1058,7 +1062,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 
 .workspace-branch-tail {
   flex: 0 99999 auto;
-  min-width: 2.5em;
+  min-width: 0;
   overflow: hidden;
   color: var(--text-dim);
   font-size: var(--fs-sm);
@@ -1084,6 +1088,10 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
     width: var(--space-6);
   }
 
+  .machine-workspaces:not(.is-two-line) .workspace-header:has(.workspace-rename-input) > .workspace-actions {
+    display: none;
+  }
+
   .machine-workspaces:not(.is-two-line) .workspace-header > .workspace-actions .sidebar-row-action { width: 100%; }
 
   .machine-workspaces:not(.is-two-line) .workspace-header:is(:hover, :focus-within) .workspace-copy,
@@ -1098,7 +1106,7 @@ button.sidebar-section-label:focus-visible { outline-offset: calc(var(--ring-off
 }
 
 @media (hover: hover) and (pointer: fine) {
-  .machine-workspaces:not(.is-two-line) .workspace-header:not(:hover, :focus-within) .workspace-branch-tail { visibility: hidden; }
+  .machine-workspaces:not(.is-two-line) .workspace-header:not(:hover, :focus-within):not(:has(> .workspace-actions [aria-expanded="true"])) .workspace-branch-tail { visibility: hidden; }
 }
 
 .sidebar-status[data-status="done"] .sidebar-status-dot {

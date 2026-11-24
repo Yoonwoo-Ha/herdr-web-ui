@@ -117,6 +117,7 @@ export const CHAT_ZH: Record<string, string> = {
   "Ran in terminal": "已在终端运行",
   "Open Terminal": "打开终端",
   "Background result delivered": "后台结果已送达",
+  "Stopped|chat": "已停止",
   "Background task ended": "后台任务已结束",
   "Goal continues": "目标继续推进",
   "background work": "后台工作",

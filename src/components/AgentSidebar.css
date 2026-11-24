@@ -412,12 +412,16 @@
 }
 
 @media (hover: hover) and (pointer: fine) and (min-width: 769px) {
-  .agents-sidebar.is-one-line .agent-item > .agent-actions {
+  .agents-sidebar.is-one-line .agent-item:not(:has(.context-count)) > .agent-actions {
     position: absolute;
     inset-block: 0;
     right: calc(var(--agent-tail) + var(--agent-time));
-    padding-inline-start: var(--space-4);
-    background: linear-gradient(to right, transparent, var(--row-fill) var(--space-4));
+  }
+
+  .agents-sidebar.is-one-line .agent-item:not(:has(.context-count)):is(:hover, :focus-within) .agent-copy,
+  .agents-sidebar.is-one-line .agent-item:not(:has(.context-count)):has(> .agent-actions [aria-expanded="true"]) .agent-copy {
+    -webkit-mask-image: linear-gradient(to left, transparent var(--space-6), var(--bg-panel) calc(var(--space-6) + var(--space-4)));
+    mask-image: linear-gradient(to left, transparent var(--space-6), var(--bg-panel) calc(var(--space-6) + var(--space-4)));
   }
 
   .agents-sidebar.is-one-line .agent-item > .agent-actions .sidebar-row-action { width: var(--space-6); }

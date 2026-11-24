@@ -7,7 +7,7 @@ import type { EventSourceLike, Transport, WebSocketLike } from "../transport.ts"
 import { CarrierDownError } from "../transport.ts";
 import { t } from "../i18n.ts";
 import { openRelayChannel, RelayNewSessionsRefusedError, RelayPcOfflineError, UnsafeRelayDestinationError } from "./channel.ts";
-import { AccountOpenUnsupportedError, DirectCarrierUnusableError, openRelayChannelWithFallback, probeDirect } from "../../../shared/relay-channel.ts";
+import { AccountListUnsupportedError, AccountOpenUnsupportedError, DirectCarrierUnusableError, openRelayChannelWithFallback, probeDirect } from "../../../shared/relay-channel.ts";
 import { openRefusalOf } from "../account/openPc.ts";
 import type { RelayChannel, RelayChannelOptions, RelayServerInfo, RelaySocket } from "./channel.ts";
 import { indexedDeviceStore, ServerIdentityChangedError } from "./device.ts";
@@ -64,7 +64,10 @@ function untilClosed(inner: RelaySocket, closed: () => void): RelaySocket {
 
 /** Whether another attempt could only fail the same way: the device was revoked or never paired, the PC's identity or protocol changed, or the offer is unsafe. */
 export function isFatalRelayError(error: unknown, accountOpensAll = false): error is Error {
-  if (error instanceof ServerIdentityChangedError || error instanceof UnsafeRelayDestinationError || error instanceof AccountOpenUnsupportedError) return true;
+  if (error instanceof ServerIdentityChangedError || error instanceof UnsafeRelayDestinationError || error instanceof AccountOpenUnsupportedError || error instanceof AccountListUnsupportedError) return true;
+  // the PC lets its account's devices in by the account's signed list, and this sign-in came with another key: the
+  // same sign-in again is refused the same way, so whoever opened it comes again with the list key (shell.tsx)
+  if (error instanceof MuxProtocolError && error.code === "account_list_required") return true;
   // the relay takes no new device for this PC while its account is past its limits: only a later try can differ
   if (error instanceof RelayNewSessionsRefusedError) return true;
   return error instanceof MuxProtocolError && ((accountOpensAll && openRefusalOf(error) !== null) || error.code === "auth_revoked" || error.code === "auth_failed"
@@ -358,7 +361,7 @@ export class RelayTransport implements Transport {
         relayStarted = true;
         viaRelay(AbortSignal.any([options.signal, relayEnd.signal]), lost("relay")).then((result) => win("relay", result), (error: unknown) => {
           relayFailure = { error };
-          if (directDone || isFatalRelayError(error, this.options.accountOpensAll)) fail(error);
+          if (directDone || isFatalRelayError(error, this.options.accountOpensAll === true || this.options.accountListKey === true)) fail(error);
         });
       };
       if (headStartMs !== undefined) cancelHeadStart = (this.options.clock ?? clock).setTimeout(startRelay, headStartMs);
@@ -435,7 +438,7 @@ export class RelayTransport implements Transport {
           }, (error: unknown) => {
             // only a refusal by the PC itself, after Noise proved it is the PC, is final: the relay's own refusal of a
             // new device is no word of a direct carrier's
-            if (!settled && (this.stopped || (isFatalRelayError(error, this.options.accountOpensAll) && !(error instanceof DirectCarrierUnusableError) && !(error instanceof RelayNewSessionsRefusedError)))) { settled = true; endOthers(); reject(error); }
+            if (!settled && (this.stopped || (isFatalRelayError(error, this.options.accountOpensAll === true || this.options.accountListKey === true) && !(error instanceof DirectCarrierUnusableError) && !(error instanceof RelayNewSessionsRefusedError)))) { settled = true; endOthers(); reject(error); }
           }).finally(async () => {
             clearTimeout(timer);
             if (opened && !settled) await Promise.race([freed.promise, new Promise<void>((done) => setTimeout(done, Math.max(0, ends - performance.now())))]);
@@ -560,7 +563,7 @@ export class RelayTransport implements Transport {
 
   private failed(error: unknown): void {
     if (this.stopped) return;
-    if (!isFatalRelayError(error, this.options.accountOpensAll)) {
+    if (!isFatalRelayError(error, this.options.accountOpensAll === true || this.options.accountListKey === true)) {
       // an attempt the relay held for an absent PC was a wait, not a hammering: no growing pause
       // between such waits, so a PC back from a restart is reached within a second
       // (a hidden page keeps the growing pause: showing it again reconnects at once, through wake)

@@ -153,6 +153,32 @@ describe("the account's PCs in the sidebar", () => {
     expect(renderer!.root.findAll((node) => node.type === "button")).toHaveLength(0);
   });
 
+  it("adds no PC by itself that the account's list does not hold, asks nothing of one it has no way to, and says which is which", async () => {
+    source.list = async () => ({ account: "acct", pcs: [
+      { ...DESK, outside: true as const },
+      { ...AWAY, server_public_key: "", relay: "", unreachable: true as const },
+    ] });
+    await act(async () => { renderer = create(tree(() => {}, [local])); });
+    await settle();
+    expect(groups().map(([label]) => label)).toEqual(["PC Desk", "PC Away"]);
+    expect(text(row("Desk"))).toContain("Not in your account's list yet");
+    expect(text(row("Away"))).toContain("Can't reach the PC");
+    // nothing was admitted or paired, and the PC with no way to it was asked nothing
+    expect(admitted).toEqual([]);
+    expect(requests.filter(({ path, body }) => path === "/api/machines/relay/account/check" && (body as { pcs: AccountPcEntry[] }).pcs.some((pc) => pc.server_id === AWAY.server_id))).toEqual([]);
+    expect(requests.filter(({ path }) => path === "/api/machines/relay/account/start")).toEqual([]);
+  });
+
+  it("adds by itself no PC of the list that is still new to this device: it waits for a person, as it does on My PCs", async () => {
+    const soon = new Date(Date.now() + 3_600_000).toISOString();
+    source.list = async () => ({ account: "acct", pcs: [{ ...DESK, byList: true as const, new_until: soon }] });
+    await act(async () => { renderer = create(tree(() => {}, [local])); });
+    await settle();
+    expect(groups().map(([label, state]) => [label, state])).toEqual([["PC Desk", "ready"]]);
+    expect(admitted).toEqual([]);
+    expect(requests.filter(({ path }) => path === "/api/machines/relay/account/start")).toEqual([]);
+  });
+
   it("A3: marks only the sidebar PC whose admission has not expired", async () => {
     jest.useFakeTimers();
     const now = Date.now();

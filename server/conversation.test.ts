@@ -773,6 +773,74 @@ describe("parseClaudeTranscript", () => {
     ]);
   });
 
+  it("reads a stop as one quiet notice where it was, not as the person's words", () => {
+    // as Claude Code (2.1.295 to 2.1.330) records a stop: one text block in the person's seat. Esc at a tool call's
+    // prompt refuses the call and marks the stop "for tool use"; Esc while it answers marks the stop plainly.
+    const assistant = (block: object, stop: string | null, ts: string) => JSON.stringify({ type: "assistant", timestamp: ts, message: { role: "assistant", stop_reason: stop, content: [block] } });
+    const user = (content: unknown, ts: string) => JSON.stringify({ type: "user", timestamp: ts, message: { role: "user", content } });
+    const lines = [
+      user("run the tests", "2026-11-22T05:00:00.000Z"),
+      assistant({ type: "tool_use", id: "t1", name: "Bash", input: { command: "bun test" } }, "tool_use", "2026-11-22T05:00:01.000Z"),
+      user([{ type: "tool_result", tool_use_id: "t1", is_error: true, content: "The user doesn't want to proceed with this tool use. The tool use was rejected." }], "2026-11-22T05:00:09.000Z"),
+      user([{ type: "text", text: "[Request interrupted by user for tool use]" }], "2026-11-22T05:00:09.001Z"),
+      user("go on", "2026-11-22T05:01:00.000Z"),
+      assistant({ type: "text", text: "Running them" }, null, "2026-11-22T05:01:02.000Z"),
+      user([{ type: "text", text: "[Request interrupted by user]" }], "2026-11-22T05:01:03.000Z"),
+      user("just the server ones", "2026-11-22T05:02:00.000Z"),
+      assistant({ type: "text", text: "Done." }, "end_turn", "2026-11-22T05:02:05.000Z"),
+    ];
+    const turns = parseClaudeTranscript(lines.join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? `${part.source}: ${part.text}` : part.kind === "text" ? part.text : part.kind)])).toEqual([
+      ["user", ["run the tests"]],
+      ["assistant", ["tool"]],
+      ["user", ["stopped: Stopped"]],
+      ["user", ["go on"]],
+      ["assistant", ["Running them"]],
+      ["user", ["stopped: Stopped"]],
+      ["user", ["just the server ones"]],
+      ["assistant", ["Done."]],
+    ]);
+    expect([turns[2]!.ts, turns[5]!.ts]).toEqual(["2026-11-22T05:00:09.001Z", "2026-11-22T05:01:03.000Z"]);
+    // the paged reader agrees: a stop's mark opens no turn of its own
+    expect(turnStarts(Buffer.from(lines.join("\n") + "\n"), "claude-transcript")).toHaveLength(3);
+  });
+
+  it("keeps literal human prompts reading like a stop mark and settles dispatched Code Mode scripts on stop", () => {
+    const assistant = (block: object, stop: string | null, ts: string) => JSON.stringify({ type: "assistant", timestamp: ts, message: { role: "assistant", stop_reason: stop, content: [block] } });
+    const lines = [
+      // human string prompt (even without origin/permissionMode, e.g. older transcript)
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:00:00.000Z", message: { role: "user", content: "[Request interrupted by user]" } }),
+      // human array prompt with origin/permissionMode
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:00:01.000Z", origin: { kind: "human" }, permissionMode: "default", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } }),
+      // multi-block prompt containing the literal string alongside another text block
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:00:02.000Z", message: { role: "user", content: [{ type: "text", text: "Why did it say:" }, { type: "text", text: "[Request interrupted by user]" }] } }),
+      // human queued_command carrying the literal string
+      JSON.stringify({ type: "attachment", timestamp: "2026-11-22T06:00:03.000Z", attachment: { type: "queued_command", commandMode: "prompt", origin: { kind: "human" }, prompt: "[Request interrupted by user]" } }),
+      // Bash approval feedback beside a successful tool_result (no origin/permissionMode)
+      assistant({ type: "tool_use", id: "b1", name: "Bash", input: { command: "echo hi" } }, "tool_use", "2026-11-22T06:00:10.000Z"),
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:00:11.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "b1", content: "hi" }, { type: "text", text: "[Request interrupted by user]" }] } }),
+      // dispatched Code Mode REPL interrupted by Esc before any later prompt
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:01:00.000Z", origin: { kind: "human" }, permissionMode: "default", message: { role: "user", content: "run script" } }),
+      assistant({ type: "tool_use", id: "r1", name: "REPL", input: { code: "sleep 10" } }, "tool_use", "2026-11-22T06:01:01.000Z"),
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:01:02.000Z", message: { role: "user", content: [{ type: "tool_result", tool_use_id: "r1", content: "(dispatched #1)" }] } }),
+      JSON.stringify({ type: "user", timestamp: "2026-11-22T06:01:03.000Z", message: { role: "user", content: [{ type: "text", text: "[Request interrupted by user]" }] } }),
+    ];
+    const turns = parseClaudeTranscript(lines.join("\n"));
+    expect(turns.map((turn) => [turn.role, turn.parts.map((part) => part.kind === "notice" ? `${part.source}: ${part.text}` : part.kind === "text" ? part.text : part.kind === "tool" ? `${part.kind}:${part.state}:${part.output}` : part.kind)])).toEqual([
+      ["user", ["[Request interrupted by user]"]],
+      ["user", ["[Request interrupted by user]"]],
+      ["user", ["Why did it say:\n[Request interrupted by user]"]],
+      ["user", ["[Request interrupted by user]"]],
+      ["assistant", ["tool:ok:hi"]],
+      ["user", ["[Request interrupted by user]"]],
+      ["user", ["run script"]],
+      ["assistant", ["tool:ok:(dispatched #1)"]],
+      ["user", ["stopped: Stopped"]],
+    ]);
+    // All five real human user entries (3 literal prompts + approval feedback + "run script") open turns; the stop mark does not.
+    expect(turnStarts(Buffer.from(lines.join("\n") + "\n"), "claude-transcript")).toHaveLength(5);
+  });
+
   it("keeps a notice joined from long lines within the notice's length", () => {
     const info = (content: string, ts: string) => JSON.stringify({ type: "system", subtype: "informational", content, timestamp: ts });
     const [turn] = parseClaudeTranscript([

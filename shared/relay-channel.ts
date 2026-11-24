@@ -6,7 +6,7 @@ import { PENDING_MS, pairFingerprint, signPairProof } from "./pair-fingerprint.t
 import { channelBinding, openClientSecureChannel } from "./relay-e2ee.ts";
 import { fromBase64Url, PAIR_APPROVAL_MS, pairCommitment, pairDigits, randomPairNonce, toBase64Url } from "./relay-pair-sas.ts";
 import type { SecureChannel, Transport } from "./relay-e2ee.ts";
-import { ACCOUNT_FEATURE, ACCOUNT_LISTING_ERRORS, ACCOUNT_OPENS_ALL_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, isTailnetCarrier, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_PC_PROOF, PAIR_SAS_FEATURE, PC_CODE_ACCOUNT_ONLY, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
+import { ACCOUNT_FEATURE, ACCOUNT_LIST_FEATURE, ACCOUNT_LISTING_ERRORS, ACCOUNT_OPENS_ALL_FEATURE, decodeFrame, DIRECT_CARRIER, DIRECT_TAILNET, FrameType, isDirectCarrier, isTailnetCarrier, KEY_PROOF_FEATURE, LARGE_WS_MESSAGES, LIMITS_V1, MuxProtocolError, PAIR_INTENT_ACCOUNT, PAIR_INTENT_PC, PAIR_INTENT_VOUCHED, PAIR_PC_PROOF, PAIR_SAS_FEATURE, PC_CODE_ACCOUNT_ONLY, RELAY_HINTS, RELAY_PROTOCOL, SERVER_TIME_HEADER } from "./relay-mux.ts";
 import { hintedRelay } from "./relay-regions.ts";
 import { MuxEngine, MUX_SETUP_MS } from "./relay-mux-engine.ts";
 import type { MuxOptions, SessionFrame } from "./relay-mux-engine.ts";
@@ -22,6 +22,14 @@ export class AccountOpenUnsupportedError extends Error {
   constructor() {
     super("The PC did not negotiate account open");
     this.name = "AccountOpenUnsupportedError";
+  }
+}
+
+/** A sign-in with the key the account's signed list holds for this device met a PC that follows no list: it takes that feature from nobody. */
+export class AccountListUnsupportedError extends Error {
+  constructor() {
+    super("The PC does not let devices in by the account's signed list");
+    this.name = "AccountListUnsupportedError";
   }
 }
 
@@ -154,6 +162,14 @@ export interface RelayChannelOptions {
    */
   readonly accountOpensAll?: boolean;
   /**
+   * This sign-in is with the key the account's signed list holds for the device (docs/account.md, "How an app signs in
+   * to a pinned PC"): it requires ACCOUNT_LIST_FEATURE, so a PC that follows no list refuses it
+   * (AccountListUnsupportedError) and the caller falls back to the ways from before. Every sign-in that is no pairing
+   * offers that feature, required or not: a pinned PC then tells a client that came with another key so
+   * (`account_list_required`), which a client that did not offer it would take for a protocol error.
+   */
+  readonly accountListKey?: boolean;
+  /**
    * Offer KEY_PROOF_FEATURE (device table T71, T72): a pairing by code proves its key over the PC's KEY_CHALLENGE and
    * on KEY_PENDING reports the fingerprint it computed from this offer's server_id, that challenge and its own key.
    * Nothing the PC or the relay sends is shown as a fingerprint.
@@ -237,7 +253,11 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
     // an older PC selects none of these; a comparison names what it asks for, so the PC's prompt can say it
     const offered: readonly string[] = comparing
       ? [ACCOUNT_FEATURE, PAIR_SAS_FEATURE, options.intent === "account" ? PAIR_INTENT_ACCOUNT : options.intent === "vouched" ? PAIR_INTENT_VOUCHED : PAIR_INTENT_PC, ...(options.intent === "vouched" ? [PAIR_PC_PROOF] : [])]
-      : [ACCOUNT_FEATURE, ...options.accountOpensAll === true ? [ACCOUNT_OPENS_ALL_FEATURE] : [], ...options.keyProof !== undefined && offer.code !== undefined ? [KEY_PROOF_FEATURE] : [],
+      : [ACCOUNT_FEATURE,
+        // a sign-in by the list key offers the account open too, never requires it: a PC tells the ten-second hold of a device its list let in only to a client that offered it
+        ...options.accountOpensAll === true || (options.accountListKey === true && offer.code === undefined) ? [ACCOUNT_OPENS_ALL_FEATURE] : [],
+        ...offer.code === undefined ? [ACCOUNT_LIST_FEATURE] : [],
+        ...options.keyProof !== undefined && offer.code !== undefined ? [KEY_PROOF_FEATURE] : [],
         ...options.pcCodeAdd && offer.code !== undefined ? [PC_CODE_ACCOUNT_ONLY] : [], ...offer.code === undefined ? [ACCOUNT_LISTING_ERRORS] : []];
     const hinted: readonly string[] = [RELAY_HINTS, ...options.offerDirect ? [DIRECT_CARRIER, ...options.offerTailnet ? [DIRECT_TAILNET] : []] : []];
     let phoneNonce: Uint8Array | undefined;
@@ -299,6 +319,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
       if (phase === "ready") { mux?.receive(bytes); return; }
       const frame = decodeFrame(bytes);
       if (options.accountOpensAll && phase === "welcome" && frame.type === FrameType.SESSION_ERROR && frame.payload.code === "unsupported_extension") throw new AccountOpenUnsupportedError();
+      if (options.accountListKey && phase === "welcome" && frame.type === FrameType.SESSION_ERROR && frame.payload.code === "unsupported_extension") throw new AccountListUnsupportedError();
       if (frame.type === FrameType.SESSION_ERROR) throw new MuxProtocolError(frame.payload.code, frame.payload.message, frame.payload.receipts, frame.payload.hold);
       if (frame.type === FrameType.RECEIVED) {
         if (!mux || frame.payload > mux.stats.submitted) throw new MuxProtocolError("protocol_error", "Receipt exceeds submitted frames");
@@ -316,6 +337,12 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
           if (frame.payload.provisional) { passed = bytes; provisionalNonce = frame.payload.nonce; return; }
           if (provisionalNonce !== undefined && provisionalNonce !== frame.payload.nonce) throw new MuxProtocolError("protocol_error", "The PC's answer to HELLO changed its WELCOME");
           if (!frame.payload.features.includes(ACCOUNT_OPENS_ALL_FEATURE)) throw new AccountOpenUnsupportedError();
+        }
+        if (options.accountListKey) {
+          // the list key is sent only after the PC's final, authenticated answer to HELLO says that it follows a list
+          if (frame.payload.provisional) { passed = bytes; provisionalNonce = frame.payload.nonce; return; }
+          if (provisionalNonce !== undefined && provisionalNonce !== frame.payload.nonce) throw new MuxProtocolError("protocol_error", "The PC's answer to HELLO changed its WELCOME");
+          if (!frame.payload.features.includes(ACCOUNT_LIST_FEATURE)) throw new AccountListUnsupportedError();
         }
         phase = "auth";
         Object.assign(limits, frame.payload.limits);
@@ -505,7 +532,7 @@ export async function openRelayChannel(offer: RelayOffer, options: RelayChannelO
         });
         mux.receiveLargeMessages();
         await send({ type: FrameType.HELLO, flags: 0, stream_id: 0,
-          payload: { protocol: "ovis-mux", versions: [1], features: [...hinted, LARGE_WS_MESSAGES, SERVER_TIME_HEADER, ...offered], required_features: options.accountOpensAll ? [ACCOUNT_OPENS_ALL_FEATURE] : [] } });
+          payload: { protocol: "ovis-mux", versions: [1], features: [...hinted, LARGE_WS_MESSAGES, SERVER_TIME_HEADER, ...offered], required_features: options.accountOpensAll ? [ACCOUNT_OPENS_ALL_FEATURE] : options.accountListKey ? [ACCOUNT_LIST_FEATURE] : [] } });
       }).catch(failed);
     };
   });

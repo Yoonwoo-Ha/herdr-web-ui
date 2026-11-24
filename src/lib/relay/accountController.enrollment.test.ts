@@ -9,6 +9,7 @@ import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { accountDeviceId, newRecordId, signAccountRecord } from "../../../shared/account-records.ts";
 import type { AddRecord } from "../../../shared/account-records.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
+import type { AccountList, AccountListView } from "../account/accountList.ts";
 import type { PcFetch } from "../account/join.ts";
 import { enrollPc, planEnroll, rememberDevice } from "../account/join.ts";
 import { memoryAccountStore, memoryLock, newKey } from "../account/store.ts";
@@ -43,6 +44,14 @@ describe("account enrollment ownership", () => {
   async function fixture(heldPath: string, options: { readonly linking?: boolean; readonly planned?: false; readonly addAtPc?: true; readonly admitted?: number; readonly listed?: boolean; readonly holdRenewal?: boolean; readonly peerFetch?: PcFetch; readonly heldAccount?: string;
     readonly accountAnswer?: (route: string, sent: number, init?: RequestInit) => Response | Error | undefined | Promise<Response | Error | undefined>;
     readonly viewActive?: boolean;
+    /** this device follows its account's signed list (`following`), waits to be let into it (`waiting`), or the round that tells has not ended (`unread`) */
+    readonly list?: "following" | "waiting" | "unread" | "unanswered";
+    /** the PC lets its account's devices in by the account's signed list alone: it refuses a link */
+    readonly pinned?: true;
+    /** whether the PC is in the account, where that is not what `linking` says */
+    readonly inAccount?: boolean;
+    /** the PC's row of this device is no member's */
+    readonly unlinkedRow?: true;
     /**
      * an own sign-in made 30 days ago, on an account service with Step 2 on (both clocks agree), with the key it registered
      * or none; `before`: the account service from before key proofs
@@ -92,13 +101,13 @@ describe("account enrollment ownership", () => {
     const signOutAsked = Promise.withResolvers<void>();
     const viewChanged = Promise.withResolvers<void>();
     let accountHeld = false;
-    let linked = !options.linking;
+    let linked = options.inAccount ?? !options.linking;
     let introductions = 0;
     let links = 0;
     const answer = (path: string): Response => {
       switch (path) {
-        case "/api/account/status": return Response.json({ account: linked ? "account" : null, unlinked: [], removals: [], enrolling: options.planned !== false, ...(options.addAtPc ? { pc_add_required: true } : {}) });
-        case "/api/account/link": links++; linked = true; return Response.json({});
+        case "/api/account/status": return Response.json({ account: linked ? "account" : null, unlinked: options.unlinkedRow ? [original.device_id] : [], removals: [], enrolling: options.planned !== false, ...(options.addAtPc ? { pc_add_required: true } : {}) });
+        case "/api/account/link": links++; if (options.pinned) return Response.json({ error: { code: "list_followed" } }, { status: 409 }); linked = true; return Response.json({});
         case "/api/account/enroll": return Response.json({ results: records.map((record, index) => ({ id: record.id, outcome: index < (options.admitted ?? 2) ? "applied" : "refused", code: "key_held" })) });
         case "/api/account/introduction": introductions++; return Response.json({ pcs: [] });
         default: throw new TypeError("Unexpected PC request: " + path);
@@ -119,10 +128,21 @@ describe("account enrollment ownership", () => {
         return options.peerFetch(path, init);
       }
     }
+    const listStatus: AccountListView["status"] = options.list === "waiting" ? { at: "not_in", list: "5c".repeat(32), why: "not_mine", claim: "claimed" }
+      : { at: "following", list: "5c".repeat(32), standing: "in", head: 1, read_at: 1, trouble: null };
+    const listView: AccountListView = { account: "account", reached: true, status: listStatus, devices: [], pcs: [] };
+    const unread: AccountListView = { account: null, reached: true, status: { at: "off" }, devices: [], pcs: [] };
+    // the account service did not say whether the account has a list, and this page holds no copy that says so
+    const unanswered: AccountListView = { account: "account", reached: false, status: { at: "off" }, devices: [], pcs: [] };
+    let listRead = options.list !== "unread";
+    const accountList: AccountList | undefined = options.list === undefined ? undefined : {
+      sync: async () => { listRead = true; return options.list === "unanswered" ? unanswered : listView; }, follows: async () => true, view: () => options.list === "unanswered" ? unanswered : listRead ? listView : unread, subscribe: () => () => {}, holdsPc: () => false, pcOfKey: () => null, due: () => null,
+      shown: () => Math.floor(Date.now() / 1000), shadow: async () => null, dropNames: async () => {}, forget: async () => {}, adopt: async () => listView, writer: () => null, placeAt: () => null, holdsEntry: () => false, gossip: () => null, pageAfter: () => null, kept: async () => null, keep: async () => { throw new Error("nothing is signed in this test"); }, unkeep: async () => {}, waiting: async () => null, cancel: async () => "gone" as const,
+    };
     const open = async (target: RelayOffer = offer) => { const transport = target.server_id === offer.server_id ? new Admitted(offer) : new Peer(target); transports.push(transport); return transport; };
     const controller = () => createAccountController({
       container: Object.create(null), entryUrl: "https://app.ovis.invalid", renderApp: () => { throw new TypeError("No app here"); },
-      store, accountStore, accountService: "https://account.invalid", accountProviders: ["github"], open,
+      store, accountStore, accountService: "https://account.invalid", accountProviders: ["github"], open, ...(accountList === undefined ? {} : { accountList }),
       accountFetch: async (input, init) => {
         const route = `${init?.method ?? "GET"} ${new URL(input instanceof Request ? input.url : String(input)).pathname}`;
         sends.push({ route, at: Date.now() });
@@ -180,6 +200,77 @@ describe("account enrollment ownership", () => {
     expect(await run.controller.enroll(await run.open(), run.original.server_id, true)).toMatchObject({ state: "complete" });
     expect(run.links()).toBe(1);
     expect(run.putPcs).toEqual(["put"]);
+  });
+
+  describe("on an account that lets its PCs in by its signed list", () => {
+    /** what the row of the PC then says, as My PCs draws it */
+    const rowSays = async (run: Run): Promise<string> => renderToStaticMarkup(createElement(SettingsProvider, { children: createElement(EnrollmentStatus, { state: enrollmentOf((await run.store.get(run.original.server_id))!) }) }));
+    for (const list of ["following", "waiting", "unread", "unanswered"] as const) {
+      it(`opening a saved pairing lists no PC and starts no enrollment, though one was planned (${list})`, async () => {
+        // the account service refuses that listing from a sign-in older than ten minutes: nothing is sent for it to refuse
+        const run = await fixture("unused", { list, accountAnswer: (route) => route === "PUT /v1/pcs/" + run.original.server_id ? Response.json({ error: { code: "session_not_fresh", message: "" } }, { status: 403 }) : undefined });
+        const asked: string[] = [];
+        const opened = await run.open();
+        const fetch = opened.fetch.bind(opened);
+        opened.fetch = async (path: string) => { asked.push(path); return fetch(path); };
+        const said = await run.controller.enroll(opened, run.original.server_id, false);
+        // a device that still waits to be let into the list says nothing of the account: "In your account" is for one its own copy shows in
+        if (list === "waiting") expect(said).toBe("local");
+        else expect(said).toMatchObject({ state: "complete" });
+        expect({ puts: run.putPcs, links: run.links(), enrolled: asked.includes("/api/account/enroll") }).toEqual({ puts: [], links: 0, enrolled: false });
+        expect(await rowSays(run)).not.toContain("incomplete");
+        // the pairing is what it was
+        expect(await run.store.get(run.original.server_id)).toMatchObject({ device_id: run.original.device_id, public_spki: run.original.public_spki });
+      });
+    }
+
+    it("where the account service did not say whether the account keeps a list, a saved pairing of a PC in no account is only left as it is: what its row says of the account is not erased", async () => {
+      const run = await fixture("unused", { list: "unanswered", linking: true, planned: false });
+      const before = (await run.store.get(run.original.server_id))! as { account?: string; account_enrollment?: unknown };
+      expect(before.account).toBe("account");
+      expect(await run.controller.enroll(await run.open(), run.original.server_id, false)).toBe("local");
+      expect({ puts: run.putPcs, links: run.links() }).toEqual({ puts: [], links: 0 });
+      // nothing was sent, and nothing was taken from the row: the next open that gets an answer decides
+      expect(await run.store.get(run.original.server_id)).toMatchObject({ account: "account", device_id: run.original.device_id });
+    });
+
+    it("a saved pairing whose row is not linked yet, on a PC that is in the account and still enrolling, plans no enrollment of its own (M20)", async () => {
+      const run = await fixture("unused", { list: "following", inAccount: true, unlinkedRow: true });
+      await run.accountStore.set("enrolls", undefined);
+      await run.controller.enroll(await run.open(), run.original.server_id, false);
+      // the link goes, as for any row that is not linked; the enrollment that brings a PC into the account is the list's
+      expect({ links: run.links(), plan: (await run.accountStore.get("enrolls"))?.[run.original.server_id], puts: run.putPcs }).toEqual({ links: 1, plan: undefined, puts: [] });
+    });
+
+    it("a saved pairing of a PC that is in no account sends it no link: a PC comes into such an account by the list", async () => {
+      const run = await fixture("unused", { list: "following", linking: true, planned: false });
+      await unlinked(run);
+      const before = await run.store.get(run.original.server_id);
+      expect(await run.controller.enroll(await run.open(), run.original.server_id, false)).toBe("local");
+      expect({ puts: run.putPcs, links: run.links() }).toEqual({ puts: [], links: 0 });
+      expect(await rowSays(run)).toBe("");
+      expect(await run.store.get(run.original.server_id)).toMatchObject({ device_id: before!.device_id, public_spki: before!.public_spki, private_key: before!.private_key });
+    });
+
+    it("an account that follows no list lists and enrolls as before", async () => {
+      const run = await fixture("unused", { linking: true });
+      await unlinked(run);
+      expect(await run.controller.enroll(await run.open(), run.original.server_id, false)).toMatchObject({ state: "complete" });
+      expect({ puts: run.putPcs, links: run.links() }).toEqual({ puts: ["put"], links: 1 });
+    });
+
+    for (const fresh of [false, true]) {
+      it(`a pairing made at a PC that lets devices in by the list alone is whole without a link (${fresh ? "new" : "saved"})`, async () => {
+        const run = await fixture("unused", { list: "waiting", pinned: true, inAccount: true, unlinkedRow: true, planned: false });
+        await unlinked(run);
+        const before = await run.store.get(run.original.server_id);
+        expect(await run.controller.enroll(await run.open(), run.original.server_id, fresh)).toBe("local");
+        expect({ puts: run.putPcs, links: run.links() }).toEqual({ puts: [], links: 1 });
+        // neither a failed pairing nor a failed enrollment: the row says nothing, and the pairing opens the PC as before
+        expect(await rowSays(run)).toBe("");
+        expect(await run.store.get(run.original.server_id)).toMatchObject({ device_id: before!.device_id, public_spki: before!.public_spki, private_key: before!.private_key });
+      });
+    }
   });
 
   it("does not list a pairing after Forget releases a held renewal", async () => {

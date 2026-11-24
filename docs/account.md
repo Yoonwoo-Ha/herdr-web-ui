@@ -1487,10 +1487,12 @@ A PC pins a list when both of these hold, and never on the account service's wor
    entry a member signed, or a `join` entry of an invite a member placed.
 
 No screen of the app names a list yet, so no PC pins one in this release without that call. **Do
-not pin a PC you use**: the apps released so far open a PC through the account with the key of their
-sign-in, which a pinned PC lets in no more ([How an app signs in](#how-an-app-signs-in-to-a-pinned-pc)),
-so every such app would be shut out of it until an app that signs in with its list key is released.
-The call is for tests until then. Nothing an app released so far does can bring a PC to pin: the
+not pin a PC that older apps use**: an app from before this one opens a PC through the account with
+the key of its sign-in, which a pinned PC lets in no more
+([How an app signs in](#how-an-app-signs-in-to-a-pinned-pc)), so such an app is shut out of the PC
+until it is updated. The app signs in with its list key from this release on
+([What a pinned PC asks of the app](account-list.md#what-a-pinned-pc-asks-of-the-app)). The call is
+for tests until a screen names a list. Nothing an app released so far does can bring a PC to pin: the
 second condition needs an entry for this PC that a member signed, and no released app writes one.
 A PC must be in the account before it names a list. One press never pins: the list it would follow
 would be the one the service names.
@@ -2330,6 +2332,9 @@ The code is [`src/lib/account/seenPcs.ts`](../src/lib/account/seenPcs.ts).
   signing and verification.
 - [`src/lib/account/accountList.ts`](../src/lib/account/accountList.ts): a device's own copy of the
   account's signed list ([account-list.md](account-list.md#on-a-device)).
+- [`src/lib/account/listPcs.ts`](../src/lib/account/listPcs.ts): the account's PCs as that list
+  holds them, for a device that is in it
+  ([account-list.md](account-list.md#pcs-of-a-list-account)).
 - [`shared/account-service-fake.ts`](../shared/account-service-fake.ts): the account service API in
   memory, for tests, the signed list's routes included
   ([account-list.md](account-list.md#the-list-routes-in-tests)).

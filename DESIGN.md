@@ -3669,6 +3669,12 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
   look and take a `--pointer-target` hit area through an invisible `::before` expander.
 - A message carries no rewind action: an agent's own `/rewind` (Claude Code, grok, Antigravity) is run in the pane's terminal, and
   Chat follows the native transcript's active branch once the agent records it; it never guesses a restore from a dialog's wording.
+- A stop in Claude Code (Esc) is one quiet line where the turn stopped, **Stopped** and its time
+  (`.chat-stopped`, drawn as a goal's wait is: `--text-dim` `--fs-sm` between hairlines), not a bubble.
+  Claude Code records a stop in the person's seat, `[Request interrupted by user for tool use]` after
+  the call it refused or `[Request interrupted by user]`; nobody typed it, and it starts no turn. It
+  follows Claude Code's own terminal, which draws a stop as a dim **Interrupted** line rather than as
+  the person's message; the word is the chat's own (**Stopped on an error**).
 - A terminal-only command sent from Chat is one quiet right-aligned row, not a bubble:
   `SquareTerminal`, the command in mono `--fs-sm`, **Ran in terminal** in `--text-dim`,
   and one **Open Terminal** text button, which opens a terminal peek over the chat (see the
