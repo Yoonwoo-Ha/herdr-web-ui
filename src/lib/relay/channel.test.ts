@@ -16,10 +16,10 @@ import { MuxEngine } from "../../../shared/relay-mux-engine.ts";
 import type { RelayChannelOptions } from "../../../shared/relay-channel.ts";
 import { withAccountDevice } from "../account/accountDevice.ts";
 import type { RelayDevice, RelayDeviceStore } from "./device.ts";
-import { ACCOUNT_OPENS_ALL_FEATURE } from "../../../shared/relay-mux.ts";
+import { ACCOUNT_LIST_FEATURE, ACCOUNT_OPENS_ALL_FEATURE } from "../../../shared/relay-mux.ts";
 import { pairFingerprint, verifyPairProof } from "../../../shared/pair-fingerprint.ts";
 import { ADMISSION_MS, ASSIGNMENT_MS, openRelayChannel, PC_ANSWER_MS, RelayAdmissionTimeoutError, RelayNewSessionsRefusedError, RelayPcOfflineError, RelayUnreachableError } from "./channel.ts";
-import { probePc } from "../../../shared/relay-channel.ts";
+import { AccountListUnsupportedError, probePc } from "../../../shared/relay-channel.ts";
 import { isFatalRelayError } from "./transport.ts";
 import { RELAY_NEW_SESSIONS_CLOSE, RELAY_NEW_SESSIONS_REFUSED } from "../../../shared/relay-pass.ts";
 import type { RelaySocket } from "./channel.ts";
@@ -498,6 +498,33 @@ it("T34, G5: offers the account-opens-all mux feature in HELLO only when asked, 
   expect(asking.offered).toContain(ACCOUNT_OPENS_ALL_FEATURE);
   asking.allowAuth.resolve();
   await asking.opening;
+});
+
+it("offers the account-list feature on every sign-in that is no pairing, so a pinned PC can say which key it wants", async () => {
+  const plain = await fixture(false);
+  await plain.authSeen.promise;
+  expect(plain.offered).toContain(ACCOUNT_LIST_FEATURE);
+  expect(plain.offered).not.toContain(ACCOUNT_OPENS_ALL_FEATURE);
+  plain.allowAuth.resolve();
+  await plain.opening;
+  // a pairing by code offers none of it: no device is named yet
+  const pairing = await fixture(true);
+  pairing.allowAuth.resolve();
+  await pairing.opening;
+  expect(pairing.offered).not.toContain(ACCOUNT_LIST_FEATURE);
+});
+
+it("signs in with the list key only to a PC whose final WELCOME says that it follows a list, and offers the account open beside it", async () => {
+  const pinned = await fixture(false, undefined, undefined, { provisional: true, features: [ACCOUNT_LIST_FEATURE] }, { accountListKey: true });
+  await pinned.authSeen.promise;
+  expect(pinned.offered).toEqual(expect.arrayContaining([ACCOUNT_LIST_FEATURE, ACCOUNT_OPENS_ALL_FEATURE]));
+  pinned.allowAuth.resolve();
+  await pinned.opening;
+  // a PC that follows no list selects nothing: no AUTH goes out, and the caller is told which it was
+  const plain = await fixture(false, undefined, undefined, {}, { accountListKey: true });
+  plain.allowAuth.resolve();
+  await expect(plain.opening).rejects.toBeInstanceOf(AccountListUnsupportedError);
+  expect(plain.trace).toEqual(["client:HELLO", "server:WELCOME"]);
 });
 
 it("T34: an account open after a provisional WELCOME acknowledges every PC setup frame", async () => {

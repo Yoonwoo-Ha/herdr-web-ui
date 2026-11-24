@@ -4,6 +4,11 @@ import { create, type ReactTestRenderer } from "react-test-renderer";
 import { FakeAccountService } from "../../shared/account-service-fake.ts";
 import { generateKeyPair } from "../../shared/relay-e2ee.ts";
 import { deriveServerId } from "../../shared/relay-server-proof.ts";
+import { entryFromText, readBody } from "../../shared/account-list-entry.ts";
+import { addListPc, listWorld } from "../lib/account/accountList.test-helpers.ts";
+import { allowDevice } from "../lib/account/listAllow.ts";
+import { removeListPc } from "../lib/account/listRemove.ts";
+import { setPageAccountList } from "../lib/account/pageList.ts";
 import { ACCOUNT_SIGN_OUT_EVENT } from "../lib/account/service.ts";
 import { indexedAccountStore, memoryAccountStore } from "../lib/account/store.ts";
 import { SettingsProvider } from "../lib/settings.ts";
@@ -351,4 +356,70 @@ it("PADD-11: the PC whose own window this is, new or not, keeps no minute reads 
   const before = reads();
   await act(async () => { jest.advanceTimersByTime(4 * 60_000); });
   expect(reads()).toBe(before);
+});
+
+it("on an account with a signed list, tells of a PC another device added by the name the list seals, says which device, and removes it by an entry of the list", async () => {
+  const w = listWorld(ACCOUNT, Date.now());
+  const first = await w.device({ label: "Dana's phone" });
+  await first.list.sync();
+  const second = await w.device({ label: "Dana's tablet" });
+  await second.list.sync();
+  const let_in = await allowDevice(first.list, { key: (await second.keys()).key, label: "Dana's tablet", os: "android" }, { wait: async () => {} });
+  if (!let_in.allowed) throw new TypeError("The second device was not let in");
+  await second.list.adopt(let_in.offer);
+  const desk = await addListPc(w, first, "Desk in the study");
+  // a PC only the account service names is none of the account's: nothing tells of it
+  const rogue = generateKeyPair().publicKey;
+  const headers = { authorization: `Bearer ${second.session.access_token}`, "content-type": "application/json" };
+  expect((await w.fake.fetch(`${ORIGIN}/v1/pcs/${deriveServerId(rogue)}`, { method: "PUT", headers, body: JSON.stringify({ label: "Rogue", public_key: Buffer.from(rogue).toString("hex"), relay: "wss://relay.ovis.sh" }) })).ok).toBe(true);
+  expect((await w.fake.fetch(`${ORIGIN}/v1/pcs/${deriveServerId(rogue)}/admit`, { method: "POST", headers })).ok).toBe(true);
+  await second.list.sync();
+  service = w.fake;
+  spyOn(indexedAccountStore, "get").mockImplementation(second.store.get);
+  spyOn(indexedAccountStore, "update").mockImplementation(second.store.update);
+  setPageAccountList(second.list);
+  try {
+    const root = await mount(null);
+    const said = () => root.findAllByProps({ role: "status" }).flatMap((card) => card.findAllByType("span").flatMap(({ children }) => children.filter((child): child is string => typeof child === "string")));
+    expect(root.findAllByProps({ role: "status" })).toHaveLength(1);
+    expect(said()).toContain("New PC added to your account: Desk in the study");
+    expect(said()).toContain("Added from Dana's phone.");
+    const remove = root.findAllByType("button").find(({ children }) => children.includes("I didn't add this"));
+    if (remove === undefined) throw new TypeError("Missing removal action");
+    const before = w.held().entries.length;
+    await act(async () => { await remove.props.onClick(); });
+    expect(w.fake.requests.filter((request) => request.startsWith("DELETE"))).toEqual([]);
+    expect(w.held().entries.slice(before).map((text) => readBody(entryFromText(text).body).kind)).toEqual(["remove", "epoch"]);
+    expect([second.list.holdsPc(desk.endpoint), root.findAllByProps({ role: "status" })]).toEqual([false, []]);
+    // the device that added it is told nothing
+    setPageAccountList(first.list);
+    spyOn(indexedAccountStore, "get").mockImplementation(first.store.get);
+    const laptop = await addListPc(w, first, "Laptop");
+    expect([first.list.holdsPc(laptop.endpoint), (await mount(null)).findAllByProps({ role: "status" })]).toEqual([true, []]);
+  } finally { setPageAccountList(null); }
+});
+
+it("follows the account's list: the notice of a PC goes when another device puts that PC out, with no reload and no press here (M61)", async () => {
+  const w = listWorld(ACCOUNT, Date.now());
+  const first = await w.device({ label: "Dana's phone" });
+  await first.list.sync();
+  const second = await w.device({ label: "Dana's tablet" });
+  await second.list.sync();
+  const let_in = await allowDevice(first.list, { key: (await second.keys()).key, label: "Dana's tablet", os: "android" }, { wait: async () => {} });
+  if (!let_in.allowed) throw new TypeError("The second device was not let in");
+  await second.list.adopt(let_in.offer);
+  const desk = await addListPc(w, first, "Desk in the study");
+  await second.list.sync();
+  service = w.fake;
+  spyOn(indexedAccountStore, "get").mockImplementation(second.store.get);
+  spyOn(indexedAccountStore, "update").mockImplementation(second.store.update);
+  setPageAccountList(second.list);
+  try {
+    const root = await mount(null);
+    expect(root.findAllByProps({ role: "status" })).toHaveLength(1);
+    // the phone removes the PC; the tablet's page reads its list by its own clock, and nothing else tells the notice
+    expect(await removeListPc(first.list, desk.endpoint, { wait: async () => {} })).toEqual({ removed: true });
+    await act(async () => { await second.list.sync(); for (let turn = 0; turn < 20; turn += 1) await new Promise<void>((resolve) => setImmediate(resolve)); });
+    expect([second.list.holdsPc(desk.endpoint), root.findAllByProps({ role: "status" })]).toEqual([false, []]);
+  } finally { setPageAccountList(null); }
 });

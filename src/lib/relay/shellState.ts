@@ -3,7 +3,7 @@ import type { HoldState } from "../../../shared/account-devices-api.ts";
 import type { PendingPushStore } from "../push.ts";
 import type { AccountList } from "../account/accountList.ts";
 import type { AppPlatform } from "../appShell.ts";
-import type { AccountStore } from "../account/store.ts";
+import type { AccountKey, AccountStore } from "../account/store.ts";
 import type { EnrollmentState, ShellDeviceStore } from "./device.ts";
 import type { openRelayTransport } from "./transport.ts";
 import type { checkPc } from "./pcStatus.ts";
@@ -63,6 +63,10 @@ export type RelayFailure = "pc-offline" | "pc-unresponsive" | "relay-unreachable
   | "new-key-unvouched"
   /** the PC refused this device's first link: its code ended or ran out, the code is for another account, or the account service did not vouch for this device */
   | "link-required" | "account-mismatch" | "unverified-device"
+  /** the PC refused this device's link because the account's signed list removed the PC: it comes back only as a new PC */
+  | "list-removed"
+  /** this device was in its account's signed list for a limited time, which is over: the PC ended its session for that, and nobody removed it */
+  | "list-time-over"
   /** the PC could not ask the account service whether it is still in the account, or left the account and must be added to it again */
   | "account-unreachable" | "account-readd"
   /** the sign-in a marked pairing stopped for took longer than its code is good for: only a new scan pairs */
@@ -80,7 +84,11 @@ export type AccountView =
   | { kind: "signed-out"; error: string | null; provider?: AccountProvider; notice?: string }
   | { kind: "signing-in"; provider?: AccountProvider }
   /** `known`: the read failed, and these are the account's PCs this device listed at its last read that answered (knownPcs) */
-  | { kind: "signed-in"; provider: AccountProvider; pcs: MyPc[] | null; error: string | null; deleteError?: string; known?: readonly KnownPc[] };
+  | {
+    kind: "signed-in"; provider: AccountProvider; pcs: MyPc[] | null; error: string | null; deleteError?: string; known?: readonly KnownPc[];
+    /** this device cannot read its list of the account: only a newer app reads it (`newer`), or what it saved does not read (`damaged`). Its PCs are then the directory's, each marked, and none opens by itself */
+    list?: "newer" | "damaged" | "unread";
+  };
 
 export interface EnrollmentCompletion { readonly state: "complete"; readonly admitted?: number }
 
@@ -267,6 +275,14 @@ export interface Attempt {
   /** the sign-in the confirm before this pairing was drawn for: the pairing uses its account key and joins its account, and no other's */
   signIn?: AccountSession;
   readonly accountOpen?: SignInKey;
+  /**
+   * the sign-in to a PC the account's signed list holds, with the key that list holds for this device, the account key
+   * (docs/account.md, "How an app signs in to a pinned PC"): a PC that follows no list refuses it, and the ways from
+   * before are tried
+   */
+  readonly listOpen?: AccountKey;
+  /** this attempt came back from a refusal that told it to come by the list key, or by the key from before: it is not sent round again */
+  readonly retriedListOpen?: true;
   readonly retriedAccountOpen?: true;
   /** a PC new in the account that no device is in yet: a pairing it falls back to takes the number its screen shows */
   readonly freshPc?: true;

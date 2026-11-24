@@ -1,6 +1,7 @@
 import { afterEach, beforeEach, describe, expect, it } from "bun:test";
 import type { AccountList, AccountListView } from "../account/accountList.ts";
 import type { DirectoryPc } from "../account/service.ts";
+import { deriveServerId } from "../../../shared/relay-server-proof.ts";
 import { memoryAccountStore, newKey, type AccountSession, type AccountStore } from "../account/store.ts";
 import { createAccountController } from "./accountController.ts";
 import type { RelayDevice, ShellDeviceStore } from "./device.ts";
@@ -40,6 +41,8 @@ function recordingList(): { list: AccountList; calls: string[]; heard: (() => vo
   const heard: (() => void)[] = [];
   const list: AccountList = {
     sync: async () => { calls.push("sync"); return OFF; },
+    follows: async () => false,
+    shown: () => Math.floor(Date.now() / 1000),
     view: () => OFF,
     subscribe: (listener) => { heard.push(() => listener(OFF)); return () => {}; },
     holdsPc: () => false,
@@ -54,7 +57,7 @@ function recordingList(): { list: AccountList; calls: string[]; heard: (() => vo
     holdsEntry: () => false,
     gossip: () => null,
     pageAfter: () => null,
-    follows: async () => false, kept: async () => null, keep: async () => { throw new Error("nothing is signed in this test"); }, unkeep: async () => {},
+    kept: async () => null, keep: async () => { throw new Error("nothing is signed in this test"); }, unkeep: async () => {}, waiting: async () => null, cancel: async () => "gone" as const,
   };
   return { list, calls, heard };
 }
@@ -118,6 +121,121 @@ describe("the hosted shell and the account's signed list", () => {
     expect(calls.slice(4)).toEqual(["sync", `shadow acct-two ${"a1".repeat(16)},${"b2".repeat(16)} opens:`]);
   });
 
+  for (const [status, says] of [[{ at: "newer_save" }, "newer"], [{ at: "damaged", why: "form" }, "damaged"]] as const) {
+    it(`says that this device cannot read its list from the very first draw, and marks every row then (${says}) (M64)`, async () => {
+      await signIn("acct-one");
+      directory = [row("a1".repeat(16))];
+      const { list } = recordingList();
+      const unreadable = { account: "acct-one", reached: true, status, devices: [], pcs: [] } as unknown as AccountListView;
+      let read = false;
+      list.view = () => read ? unreadable : OFF;
+      list.sync = async () => { read = true; return unreadable; };
+      list.follows = async () => true;
+      const lines: (string | undefined)[] = [];
+      const marked: boolean[] = [];
+      const account = controller(list, empty, () => {
+        const { state } = account;
+        if (state?.kind !== "signed-in" || state.pcs === null) return;
+        lines.push(state.list);
+        marked.push(state.pcs.every((pc) => pc.notInList === true));
+      });
+      await account.refresh(true);
+      await settle();
+      expect([lines[0], marked[0], lines.length > 0]).toEqual([says, true, true]);
+    });
+  }
+
+  it("says that this device has not read its list yet where it holds a copy and no read ended, marks every row, and reads again at the next refresh", async () => {
+    await signIn("acct-one");
+    directory = [row("a1".repeat(16))];
+    const { list, calls } = recordingList();
+    // the page's rounds fail: no view of the account is ever there, and the device holds a copy
+    let fails = true;
+    list.view = () => fails ? OFF : inList("acct-one");
+    list.sync = async () => { calls.push("sync"); if (fails) throw new DOMException("The quota has been exceeded.", "QuotaExceededError"); return inList("acct-one"); };
+    list.follows = async () => true;
+    const account = controller(list);
+    await account.refresh(true);
+    await settle();
+    const first = account.state as { kind: string; list?: string; pcs: { notInList?: true }[] };
+    expect([first.kind, first.list, first.pcs.every((pc) => pc.notInList === true), account.knowsList]).toEqual(["signed-in", "unread", true, true]);
+    // the read is tried again with the next refresh, and once one ends the rows are the list's
+    const reads = calls.filter((call) => call === "sync").length;
+    fails = false;
+    await account.refresh(false, true);
+    await settle();
+    expect(calls.filter((call) => call === "sync").length).toBeGreaterThan(reads);
+    expect((account.state as { list?: string }).list).toBeUndefined();
+  });
+
+  it("gives the list key only while the sign-in it belongs to is the one in view: none from the moment a sign-out begins", async () => {
+    await signIn("acct-one");
+    const { list } = recordingList();
+    const mine = (await accountStore.key()).public_spki;
+    const held: AccountListView = { ...inList("acct-one"), devices: [{ key: mine, self: true, power: "full", role: "drive", until: null, carried: false, name: null }] };
+    list.view = () => held;
+    list.sync = async () => held;
+    list.follows = async () => true;
+    const account = controller(list);
+    await account.refresh(true);
+    await settle();
+    expect(account.listKey?.public_spki).toBe(mine);
+    // the person signs out: the list's own view goes only once the account service answered, the key at once
+    account.signOut();
+    expect([account.listKey, list.view().account]).toEqual([null, "acct-one"]);
+  });
+
+  it("draws nothing again when the list moves on an account that has none: only a list that is drawn from, or was, redraws the rows", async () => {
+    await signIn("acct-one");
+    directory = [row("a1".repeat(16))];
+    const { list, heard } = recordingList();
+    // the account service keeps no list for this account, and says so at the end of the page's first round
+    const off: AccountListView = { account: "acct-one", reached: true, status: { at: "off" }, devices: [], pcs: [] };
+    list.view = () => off;
+    let draws = 0;
+    const account = controller(list, empty, () => { draws += 1; });
+    await account.refresh(true);
+    await settle();
+    const before = draws;
+    for (const tell of heard) tell();
+    await settle();
+    expect(draws).toBe(before);
+    // the device comes into a list: now its rows are the list's, and they are drawn
+    list.view = () => inList("acct-one");
+    for (const tell of heard) tell();
+    await settle();
+    expect(draws).toBeGreaterThan(before);
+    // and when that list is gone again, once more, to take its rows back
+    const after = draws;
+    list.view = () => off;
+    for (const tell of heard) tell();
+    await settle();
+    expect(draws).toBeGreaterThan(after);
+    const last = draws;
+    for (const tell of heard) tell();
+    await settle();
+    expect(draws).toBe(last);
+  });
+
+  it("stops following the list once it is disposed: no later round reads it", async () => {
+    await signIn("acct-one");
+    const { list, calls } = recordingList();
+    let viewed = "acct-one";
+    list.view = () => inList(viewed);
+    const account = controller(list);
+    await account.refresh(true);
+    await settle();
+    const reads = (): number => calls.filter((call) => call === "sync").length;
+    expect(reads()).toBe(1);
+    account.dispose();
+    // what would begin a round: another sign-in, read by a refresh
+    viewed = "acct-two";
+    await signIn("acct-two");
+    await account.refresh(false, true);
+    await settle();
+    expect(reads()).toBe(1);
+  });
+
   it("compares nothing for a sign-in that ended while it read this device's pairings", async () => {
     await signIn("acct-one");
     const { list, calls, heard } = recordingList();
@@ -146,17 +264,15 @@ describe("the hosted shell and the account's signed list", () => {
     expect([unhandled, calls.filter((call) => call.startsWith("shadow"))]).toEqual([[], []]);
   });
 
-  it("reads no pairing and compares nothing where the device is in no list of the account", async () => {
+  it("compares nothing where the device is in no list of the account", async () => {
     await signIn("acct-one");
     const { list, calls, heard } = recordingList();
-    let read = 0;
-    const account = controller(list, { ...empty, list: async () => { read += 1; return []; } });
+    const account = controller(list);
     await account.refresh(true);
     await settle();
-    const before = read;
     for (const tell of heard) tell();
     await settle();
-    expect([read - before, calls.filter((call) => call.startsWith("shadow"))]).toEqual([0, []]);
+    expect(calls.filter((call) => call.startsWith("shadow"))).toEqual([]);
   });
 
   it("reads the list again after a sign-out, so that nothing of the ended sign-in stays in view, and forgets what opens its names", async () => {
@@ -188,6 +304,55 @@ describe("the hosted shell and the account's signed list", () => {
     expect(without.state).toEqual(drawn!);
     expect(without.directory).toEqual(withList.directory);
     expect(asked).toEqual(sent);
+  });
+
+  it("draws the PCs its list holds for a device that is in it, from the first draw on, and again when the list moves", async () => {
+    await signIn("acct-one");
+    const keys = [generateKeyPair().publicKey, generateKeyPair().publicKey, generateKeyPair().publicKey];
+    const [held, rogue, unreached] = keys.map((key) => ({ endpoint: Array.from(key, (byte) => byte.toString(16).padStart(2, "0")).join(""), server_id: deriveServerId(key) }));
+    const routed = (pc: { endpoint: string; server_id: string }): DirectoryPc => ({ ...row(pc.server_id), label: "The service's name", public_key: pc.endpoint, relay: "wss://relay.test", last_seen_at: new Date().toISOString() });
+    directory = [routed(held!), routed(rogue!)];
+    const listed = (pc: { endpoint: string; server_id: string }, label: string) => ({ ...pc, how: "added" as const, allows: true, name: { label, os: null }, seq: 1, by: null, new_at: null });
+    const { list, heard } = recordingList();
+    let view: AccountListView = { account: "acct-one", reached: true, status: { at: "following", list: "5c".repeat(32), standing: "in", head: 2, read_at: 1, trouble: null }, devices: [], pcs: [listed(held!, "Desk")] };
+    // the list is read from this device's own store and the account service: it answers after the directory does
+    let read = false;
+    list.view = () => read ? view : OFF;
+    list.sync = async () => { await settle(); read = true; return view; };
+    list.follows = async () => true;
+    const drawn: string[][] = [];
+    const account = controller(list, empty, () => { const { state } = account; if (state?.kind === "signed-in" && state.pcs !== null) drawn.push(state.pcs.map((pc) => pc.server_id)); });
+    await account.refresh(true);
+    await settle();
+    // never drawn by the account service's word alone: from the first draw on, the PC that only the directory names is marked
+    expect(drawn.length).toBeGreaterThan(0);
+    const marks = (pcs: readonly { server_id: string; byList?: true; notInList?: true }[]) => pcs.map((pc) => [pc.server_id, pc.byList === true ? "list" : pc.notInList === true ? "outside" : "plain"]);
+    const rowsNow = () => marks((account.state as { pcs: { server_id: string; byList?: true; notInList?: true }[] }).pcs);
+    expect(drawn.every((rows) => rows.length === 2)).toBe(true);
+    expect(rowsNow().sort()).toEqual([[held!.server_id, "list"], [rogue!.server_id, "outside"]].sort());
+    expect((account.state as { pcs: { server_id: string }[] }).pcs.find((pc) => pc.server_id === held!.server_id)).toMatchObject({ name: "Desk", byList: true, accountOpen: true, join: { relay: "wss://relay.test" } });
+    expect((account.state as { list?: string }).list).toBeUndefined();
+    // the list moved: a PC came in that the account service does not say how to reach
+    view = { ...view, pcs: [...view.pcs, listed(unreached!, "Laptop")] };
+    for (const tell of heard) tell();
+    await settle();
+    const laptop = (account.state as { pcs: { server_id: string; name: string; byList?: true; join?: unknown }[] }).pcs.find((pc) => pc.server_id === unreached!.server_id)!;
+    expect([laptop.name, laptop.byList, laptop.join]).toEqual(["Laptop", true, undefined]);
+    // put out of the list, this device goes by the account service's directory again, as a device of an account with no list does
+    view = { ...view, status: { at: "following", list: "5c".repeat(32), standing: "out", head: 3, read_at: 1, trouble: null }, pcs: [] };
+    for (const tell of heard) tell();
+    await settle();
+    expect(rowsNow().sort()).toEqual([[held!.server_id, "plain"], [rogue!.server_id, "plain"]].sort());
+    // a copy that only a newer app reads: the directory's PCs, every one marked, and the view says why
+    view = { ...view, status: { at: "newer_save" }, pcs: [] };
+    for (const tell of heard) tell();
+    await settle();
+    expect([rowsNow().sort(), (account.state as { list?: string }).list]).toEqual([[[held!.server_id, "outside"], [rogue!.server_id, "outside"]].sort(), "newer"]);
+    // read again, the line goes
+    view = { ...view, status: { at: "following", list: "5c".repeat(32), standing: "in", head: 4, read_at: 1, trouble: null }, pcs: [listed(held!, "Desk")] };
+    for (const tell of heard) tell();
+    await settle();
+    expect((account.state as { list?: string }).list).toBeUndefined();
   });
 
   /** A pairing this device just made with a PC of its account by the digits, which a member approved: its session, and what the PC answers. */
@@ -250,20 +415,41 @@ describe("the hosted shell and the account's signed list", () => {
     expect(calls.filter((call) => call.startsWith("adopt"))).toEqual([`adopt ${place.id} 4`]);
   });
 
-  it("hands a place to the list whatever this page drew of it so far, and takes none where the pairing was made with a code", async () => {
+  it("hands a place to the list whatever this page drew of it so far, and after a pairing made with a code reads the introduction once, with no wait", async () => {
     await signIn("acct-one");
     const { list, calls } = recordingList();
     // the page has not read its list yet (a reload): the place is the list's to judge, and a list that is followed takes none
     const first = await approvedPairing([{ pcs: [], list: place }]);
     await controller(list, first.store, () => {}, async () => first.session).enroll(first.session, first.serverId, true, true);
     expect(calls.filter((call) => call.startsWith("adopt"))).toEqual([`adopt ${place.id} 4`]);
-    // a pairing that is not one a member's approval made: the introduction is read once, as before, and no place taken
+    // a pairing that is not one a member's approval made: the introduction is read once, as before, with no waiting
+    // for another; a device that still waits to be let into the list takes the place that one read brings
     calls.length = 0;
     list.view = waitingView;
-    const second = await approvedPairing([{ pcs: [], list: place }]);
+    const second = await approvedPairing([{ pcs: [] }, { pcs: [], list: place }]);
     await controller(list, second.store, () => {}, async () => second.session).enroll(second.session, second.serverId, true, false);
     expect(second.introductions().length).toBe(1);
     expect(calls.filter((call) => call.startsWith("adopt"))).toEqual([]);
+  });
+
+  it("asks a PC it is paired with for its place again at a later open, while it still waits to be let into the list", async () => {
+    await signIn("acct-one");
+    const { list, calls } = recordingList();
+    // the member's Allow went through only after this device stopped asking: the PC carries the place now, and this
+    // device opens the PC from its saved pairing
+    list.view = waitingView;
+    list.follows = async () => false;
+    const later = await approvedPairing([{ pcs: [], list: place }]);
+    await controller(list, later.store, () => {}, async () => later.session).enroll(later.session, later.serverId, false);
+    expect(later.introductions().length).toBe(1);
+    expect(calls.filter((call) => call.startsWith("adopt"))).toEqual([`adopt ${place.id} 4`]);
+    // a device that follows its list asks no PC for a place at an open
+    calls.length = 0;
+    list.view = () => ({ account: "acct-one", reached: true, status: { at: "following", list: place.id, standing: "in", head: 4, read_at: 1, trouble: null }, devices: [], pcs: [] });
+    const settledIn = await approvedPairing([{ pcs: [], list: place }]);
+    await controller(list, settledIn.store, () => {}, async () => settledIn.session).enroll(settledIn.session, settledIn.serverId, false);
+    // the introduction is read once, as at any open, and no place is taken from it
+    expect([settledIn.introductions().length, calls.filter((call) => call.startsWith("adopt"))]).toEqual([1, []]);
   });
 
   it("takes no place for a pairing that was forgotten while the PC's answer was on its way", async () => {

@@ -14,6 +14,8 @@ import { desktopAccount, desktopProviders, desktopSignIn, type DesktopAccountBri
 import { ApiError, fetchBridgeHealth, fetchRelay, requestRelay } from "../lib/api.ts";
 import { startDeviceSignIn, startLinkPageSignIn, type DeviceSignInProvider } from "../lib/account/deviceSignIn.ts";
 import { AccountPcError, within } from "../lib/account/join.ts";
+import { pagePcs } from "../lib/account/listPcs.ts";
+import { pageAccountList } from "../lib/account/pageList.ts";
 import { myPcs, type MyPc } from "../lib/account/myPcs.ts";
 import { ownSignIn, ownWindowSignIn, pcServiceHere, useOwnWindowRedirect } from "../lib/account/ownWindow.ts";
 import { AccountServiceError, DEVICE_PROVIDERS, indexedAccountService, offeredProviders, sameSignIn, SignedOutError, type AccountIdentity, type AccountService, type DeviceProvider, type OfferedProviders } from "../lib/account/service.ts";
@@ -1076,7 +1078,7 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, withdrawn, si
       if (loads.current !== generation) return;
       if (lists === null) { void read(); return; }
       const { pcs, methods } = lists;
-      setView((current) => ({ ...signedIn, pcs: myPcs(pcs, [], { now: Date.now() }), methods, limits: current.kind === "signed-in" && current.account === session.account ? current.limits : null, error: null }));
+      setView((current) => ({ ...signedIn, pcs: myPcs(pagePcs(session.account, pcs), [], { now: Date.now() }), methods, limits: current.kind === "signed-in" && current.account === session.account ? current.limits : null, error: null }));
     } catch (error) {
       // a sign-in that ended is none that just finished: one stored again later (another tab) adds nothing by itself
       if (error instanceof SignedOutError) {
@@ -1098,6 +1100,11 @@ export function AccountSection({ onAccount, recheck = 0, opensAll, withdrawn, si
     }
   });
   useEffect(() => { recheckAccount(); }, [offered, load, recheck]);
+  // the account's list moved (another device changed it, or a read brought it): the rows are read again from it
+  useEffect(() => {
+    const unfollow = pageAccountList()?.subscribe(() => { void load(); });
+    return () => unfollow?.();
+  }, [load]);
   // a sign-out or a deleted account takes Manage account's sheet with it; a sign-in again for this account (to add or
   // remove a way in) keeps it, so the step it asks for next shows where it was asked
   // and another account shown here (a sign-in that ended as someone else) never gets the sheet without asking

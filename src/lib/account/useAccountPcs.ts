@@ -3,12 +3,23 @@ import { useEffect, useRef, useState } from "react";
 import type { Machine } from "../../../shared/machines.ts";
 import { AccountService } from "./service.ts";
 import { indexedAccountStore } from "./store.ts";
+import { pagePcs, readPageList } from "./listPcs.ts";
+import { pageAccountList } from "./pageList.ts";
 import { ACCOUNT_PCS_CHANGED_EVENT, myPcs } from "./myPcs.ts";
 import { ApiError, checkAccountPcs, pairAccountPc, startAccountPc, type AccountPcEntry, type AccountPcState } from "../api.ts";
 import { useT } from "../i18n.ts";
 import { deviceOs } from "../phone.ts";
 
-type AccountPcRow = AccountPcEntry & { readonly new_until?: string | null };
+/**
+ * One of the account's PCs as the sidebar lists it. `outside`: the account has a list and this device does not find
+ * the PC in it: the row says so and nothing adds it by itself. `unreachable`: the list holds the PC and the account
+ * service gives no way to it: the row says so, with no key or relay to ask it by.
+ */
+export type AccountPcRow = AccountPcEntry & {
+  readonly new_until?: string | null; readonly outside?: true; readonly unreachable?: true;
+  /** the row is a PC that this device's list of the account holds: while it is new to this device (`new_until`), nothing adds it by itself */
+  readonly byList?: true;
+};
 
 /** The account as this list uses it: its PCs that a device can pair with (key and relay from the directory), and the admission that vouches for this PC. */
 export interface AccountPcsSource {
@@ -32,9 +43,13 @@ export function signedInAccount(): AccountPcsSource {
       const session = await service.session();
       if (session === undefined) return null;
       bound = service.forSignIn(session);
-      const pcs = myPcs(await bound.listPcs(), [], { now: Date.now() }).flatMap((pc) => pc.join === undefined ? [] : [
-        { server_id: pc.server_id, name: pc.name, ...pc.join, ...(pc.new_until == null ? {} : { new_until: pc.new_until }) },
-      ]);
+      // a device that holds a copy of its account's list draws by it from the first row on: the page's read of that
+      // copy is waited for, and where none ends every row is marked, so the sidebar adds none by itself
+      const listed = await bound.listPcs();
+      await readPageList(session.account);
+      const pcs = myPcs(pagePcs(session.account, listed), [], { now: Date.now() }).flatMap((pc): AccountPcRow[] => pc.join === undefined
+        ? (pc.byList === true ? [{ server_id: pc.server_id, name: pc.name, server_public_key: "", relay: "", unreachable: true }] : [])
+        : [{ server_id: pc.server_id, name: pc.name, ...pc.join, ...(pc.new_until == null ? {} : { new_until: pc.new_until }), ...(pc.notInList === true ? { outside: true as const } : {}), ...(pc.byList === true ? { byList: true as const } : {}) }]);
       return { account: session.account, pcs };
     },
     async admit(serverId, label, key) {
@@ -81,7 +96,10 @@ export function useAccountPcs({ machines, source, enabled = true, expect, refres
   useEffect(() => {
     const changed = () => setChanges((count) => count + 1);
     window.addEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
-    return () => window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed);
+    // the account's list moved (a PC came in, one went, or this page read its copy at last): the rows are read again,
+    // so one that was drawn before the list said otherwise does not stay
+    const unfollow = pageAccountList()?.subscribe(changed);
+    return () => { window.removeEventListener(ACCOUNT_PCS_CHANGED_EVENT, changed); unfollow?.(); };
   }, []);
   const [states, setStates] = useState<ReadonlyMap<string, AccountPcState>>(new Map());
   const [pairing, setPairing] = useState<Pairing | null>(null);
@@ -161,7 +179,8 @@ export function useAccountPcs({ machines, source, enabled = true, expect, refres
   useEffect(() => {
     if (pcs === null) return;
     const round = listed.current;
-    for (const pc of pcs) if (added(pc.server_id) === undefined && !round.asked.has(pc.server_id)) check(pc, round);
+    // (a PC with no way to it is asked nothing: there is no key or relay to ask it by)
+    for (const pc of pcs) if (pc.unreachable !== true && added(pc.server_id) === undefined && !round.asked.has(pc.server_id)) check(pc, round);
   }, [pcs, machines]);
   useEffect(() => () => { listed.current = { asked: new Set(), invalid: new Set(), failed: new Set(), scope: null }; }, []);
   useEffect(() => () => running.current?.abort(), []);
@@ -198,5 +217,5 @@ export function useAccountPcs({ machines, source, enabled = true, expect, refres
       setFailure(error instanceof ApiError ? { server_id: pc.server_id, message: error.detail, ...(error.code === null ? {} : { code: error.code }) } : { server_id: pc.server_id, message: t("That PC could not be added. Try again.") });
     }
   };
-  return { pcs, added, stateOf: (serverId) => states.get(serverId), pairing, failure, add };
+  return { pcs, added, stateOf: (serverId) => pcs?.find((pc) => pc.server_id === serverId)?.unreachable === true ? "offline" : states.get(serverId), pairing, failure, add };
 }

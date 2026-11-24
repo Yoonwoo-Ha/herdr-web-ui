@@ -4,7 +4,7 @@ import { renderToStaticMarkup } from "react-dom/server";
 
 import type { AllowRefusal } from "../lib/account/listAllow.ts";
 import { SettingsProvider } from "../lib/settings.ts";
-import { keepStalled, ListAllowNotice } from "./AccountApprovals.tsx";
+import { keepStalled, ListAllowNotice } from "./ListChangeNotice.tsx";
 
 function render(why: AllowRefusal, retryAfterMs: number | null = null): string {
   const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
@@ -53,6 +53,29 @@ describe("a device a PC let in that the account's list did not take", () => {
     expect(render("behind")).toContain("Update Ovis on this device, then try again.");
     expect(render("budget", 20 * 3600_000)).toContain("Too many devices were added. Try again tomorrow.");
     expect(render("budget", 5 * 60_000)).toContain("Too many devices were added just now. Try again in a few minutes.");
+  });
+});
+
+describe("a change that still waits", () => {
+  it("offers Cancel beside Try again where a signed request waits, and none where nothing waits", () => {
+    const waits = (why: AllowRefusal, cancel: boolean): string => {
+      const saved = Object.getOwnPropertyDescriptor(navigator, "languages");
+      Object.defineProperty(navigator, "languages", { configurable: true, value: ["en"] });
+      try {
+        return renderToStaticMarkup(createElement(SettingsProvider, null, createElement(ListAllowNotice, { stalled: { key: "k", device: "Dana's tablet", pc: "Desk", why, retry: async () => {}, ...(cancel ? { cancel: async () => {} } : {}) }, onClose: () => {} })));
+      } finally {
+        if (saved) Object.defineProperty(navigator, "languages", saved);
+        else Reflect.deleteProperty(navigator, "languages");
+      }
+    };
+    expect(waits("unknown", true)).toContain(">Cancel<");
+    expect(waits("not_claimed", false)).not.toContain(">Cancel<");
+    // another change was refused because this one waits: the card says so, whatever page made the first
+    const other = waits("waiting", true);
+    expect(other).toContain("An earlier change is still waiting");
+    expect(other).toContain("Try it again, or cancel it.");
+    expect(other).toContain(">Try again<");
+    expect(other).not.toContain("was added to Desk only");
   });
 });
 

@@ -156,6 +156,8 @@ export function accountPcStateText(pc: MyPc, t: ReturnType<typeof useT>): string
  * only what the directory itself knows (offline, an update needed).
  */
 export function listedPcStateText(pc: MyPc, t: ReturnType<typeof useT>): string {
+  // the account has a list, and this device does not find the PC in it: that is what there is to say of it
+  if (pc.notInList === true && !pc.paired) return t("Not in your account's list yet");
   if (pc.state !== "needs-approval" || pc.paired) return accountPcStateText(pc, t);
   return pc.joined === true ? t("In your account") : t("Waiting to be added");
 }

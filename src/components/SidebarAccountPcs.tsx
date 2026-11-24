@@ -12,7 +12,7 @@ import { fetchRelay } from "../lib/api.ts";
 import { useT } from "../lib/i18n.ts";
 import type { AccountPcEntry } from "../lib/api.ts";
 import { serverScopePath } from "../lib/shellMode.ts";
-import { signedInAccount, useAccountPcs, type AccountPcs, type AccountPcsSource } from "../lib/account/useAccountPcs.ts";
+import { signedInAccount, useAccountPcs, type AccountPcRow as ListedAccountPc, type AccountPcs, type AccountPcsSource } from "../lib/account/useAccountPcs.ts";
 
 /**
  * Signed in to the Ovis account on a PC that is in that account with its relay online: the account's other PCs that
@@ -138,13 +138,16 @@ function JoinedAccountPcs({ account, reads, machines, onAdded, onListed, openabl
   }, [joined]);
   // only a PC being added stands in for this device's own link to it (ShellPcs.tsx): one that is outdated, off,
   // declined or failed leaves that link where it was, so an update never costs a phone the way to a PC it drives
-  const adding = waiting.filter((pc) => accountPcs.stateOf(pc.server_id) === "ready" && (accountPcs.pairing?.server_id === pc.server_id || (!tried.has(pc.server_id) && !declined(pc))));
+  const adding = waiting.filter((pc) => accountPcs.stateOf(pc.server_id) === "ready" && (accountPcs.pairing?.server_id === pc.server_id || (!tried.has(pc.server_id) && !declined(pc) && pc.outside !== true)));
   const listed = adding.map((pc) => pc.server_id).join("\n");
   useEffect(() => {
     onListed?.(listed === "" ? [] : listed.split("\n"));
     return () => onListed?.([]);
   }, [listed, onListed]);
-  const next = accountPcs.pairing === null ? waiting.find((pc) => accountPcs.stateOf(pc.server_id) === "ready" && !tried.has(pc.server_id) && !declined(pc)) : undefined;
+  // never a PC that this device's list of the account does not hold: nothing is asked of it without a person. Nor a
+  // PC of the list while it is new to this device: for its day it opens only by hand, here as on My PCs
+  const next = accountPcs.pairing === null ? waiting.find((pc) => accountPcs.stateOf(pc.server_id) === "ready" && !tried.has(pc.server_id) && !declined(pc) && pc.outside !== true
+    && !(pc.byList === true && isNewAccountPc(pc, Date.now()))) : undefined;
   useEffect(() => {
     if (next === undefined) return;
     setTried((current) => new Set(current).add(next.server_id));
@@ -158,7 +161,7 @@ function JoinedAccountPcs({ account, reads, machines, onAdded, onListed, openabl
  * One PC of the account not in this app yet, as a PC group's header with where it is under it. `opens`: this device keeps
  * its own link to it, which the row stands in for while the PC is added, so its name opens it as that link would.
  */
-function AccountPcRow({ pc, hidden, declined, failedWith, opens, pcs: { stateOf, pairing } }: { pc: AccountPcEntry & { readonly new_until?: string | null }; hidden: boolean; /** a member declined it, in this browser, for this listing */ declined: boolean; /** why its last add failed, until it is tried anew */ failedWith: string | undefined; opens: boolean; pcs: AccountPcs }) {
+function AccountPcRow({ pc, hidden, declined, failedWith, opens, pcs: { stateOf, pairing } }: { pc: ListedAccountPc; hidden: boolean; /** a member declined it, in this browser, for this listing */ declined: boolean; /** why its last add failed, until it is tried anew */ failedWith: string | undefined; opens: boolean; pcs: AccountPcs }) {
   const t = useT();
   const [expiredAt, setExpiredAt] = useState<string>();
   const newUntil = pc.new_until;
@@ -173,9 +176,12 @@ function AccountPcRow({ pc, hidden, declined, failedWith, opens, pcs: { stateOf,
   const adding = pairing?.server_id === pc.server_id;
   const failed = !adding && failedWith !== undefined;
   const refused = !adding && !failed && declined;
-  const away = state === "offline" || state === "outdated" || failed || refused;
+  // a PC the account's list does not hold is added by nothing here, and one with no way to it cannot be: each says so
+  const outside = pc.outside === true && !adding && !failed && state === "ready";
+  const away = state === "offline" || state === "outdated" || failed || refused || outside;
   // where it is, beside its name only: the words are the dot's tooltip and what a screen reader hears
-  const words = failed ? failedWith : refused ? t("Not approved") : state === undefined ? t("Checking…") : state === "offline" ? t("Switched off") : state === "outdated" ? t("Update Ovis on that PC") : t("Connecting…");
+  const words = failed ? failedWith : refused ? t("Not approved") : pc.unreachable === true ? t("Can't reach the PC") : outside ? t("Not in your account's list yet")
+    : state === undefined ? t("Checking…") : state === "offline" ? t("Switched off") : state === "outdated" ? t("Update Ovis on that PC") : t("Connecting…");
   return (
     <section hidden={hidden && !adding} className={`machine-group account-pc-group${away ? " is-offline" : ""}`} aria-label={t("PC {name}", { name: pc.name })} data-pc-state={state ?? "checking"}>
       <header className="machine-header">

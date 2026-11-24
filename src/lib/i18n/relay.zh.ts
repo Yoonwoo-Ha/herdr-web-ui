@@ -183,4 +183,11 @@ export const RELAY_ZH: Record<string, string> = {
   "SSH PC": "SSH 电脑",
   "Open {host}": "打开 {host}",
   "More ways to open {name}": "用其他方式打开 {name}",
+  "This device cannot read your account's list. Update the app.": "此设备无法读取账户名单。请更新应用。",
+  "This device has not read your account's list yet. It keeps trying.": "此设备尚未读取账户名单，正在继续尝试。",
+  "This device cannot read your account's list. Sign out and in again on this device, then allow it from another device.": "此设备无法读取账户名单。请在此设备上退出后重新登录，然后在另一台设备上允许它。",
+  "{name} was removed from your account": "{name} 已从你的账户中移除",
+  "It can come back only as a new PC. On {name}, open Settings → Devices and PCs and press Reset relay identity, then add it to your account again.": "它只能作为新 PC 重新加入。请在 {name} 上打开 设置 → 设备和电脑，点击“重置中继身份”，然后重新添加到你的账户。",
+  "This device's time in your account is over": "此设备在账户中的使用时间已结束",
+  "It was added for a limited time. To go on, add it again from a device of your account.": "此设备只被添加了一段时间。要继续使用，请从账户的其他设备重新添加。",
 };

@@ -183,4 +183,11 @@ export const RELAY_KO: Record<string, string> = {
   "SSH PC": "SSH PC",
   "Open {host}": "{host} 열기",
   "More ways to open {name}": "{name} 다른 방법으로 열기",
+  "This device cannot read your account's list. Update the app.": "이 기기에서 계정 명단을 읽을 수 없어요. 앱을 업데이트하세요.",
+  "This device has not read your account's list yet. It keeps trying.": "이 기기가 아직 계정 명단을 읽지 못했어요. 계속 시도합니다.",
+  "This device cannot read your account's list. Sign out and in again on this device, then allow it from another device.": "이 기기에서 계정 명단을 읽을 수 없어요. 이 기기에서 로그아웃했다가 다시 로그인한 뒤, 다른 기기에서 허용하세요.",
+  "{name} was removed from your account": "{name} PC가 계정에서 제거됐어요",
+  "It can come back only as a new PC. On {name}, open Settings → Devices and PCs and press Reset relay identity, then add it to your account again.": "새 PC로만 다시 추가할 수 있어요. {name} PC에서 설정 → 기기와 PC를 열고 릴레이 신원 재설정을 누른 뒤 계정에 다시 추가하세요.",
+  "This device's time in your account is over": "이 기기의 계정 사용 시간이 끝났어요",
+  "It was added for a limited time. To go on, add it again from a device of your account.": "정해진 시간 동안만 추가된 기기예요. 계속 쓰려면 계정의 다른 기기에서 다시 추가하세요.",
 };

@@ -11,7 +11,7 @@ import { keyIdOf } from "../relay/shellState.ts";
 import { isListHash } from "../../../shared/account-list-entry.ts";
 import type { ListPlace } from "../../../shared/account-list-signers.ts";
 import type { AccountList, ListOffer } from "./accountList.ts";
-import { allowDevice, type AllowOutcome, type AllowRefusal } from "./listAllow.ts";
+import { allowDevice, type AllowOutcome, type AllowRefusal, type AllowScope } from "./listAllow.ts";
 import { holdsList } from "./listWrite.ts";
 import type { AccountService, Admission } from "./service.ts";
 import { vouchedPcName, type MemberPcEvidence } from "./vouched-pc.ts";
@@ -328,7 +328,7 @@ export class ListAllowError extends Error {
  * this device follows no list or is not in it with power `full`, and then nothing is signed and the approval goes
  * on as for an account with no list. Otherwise the place to hand the new device, or a ListAllowError.
  */
-export async function allowIntoList(list: AccountList | null, joining: { key: string; label: string; os: Admission["os"] }, options: { wait?: (ms: number) => Promise<void>; account?: string } = {}): Promise<ListOffer | null> {
+export async function allowIntoList(list: AccountList | null, joining: { key: string; label: string; os: Admission["os"] }, options: { wait?: (ms: number) => Promise<void>; account?: string; scope?: AllowScope } = {}): Promise<ListOffer | null> {
   if (list === null) return null;
   const outcome: AllowOutcome = await allowDevice(list, joining, options);
   if (outcome.allowed) return outcome.offer;
@@ -344,7 +344,11 @@ export async function allowIntoList(list: AccountList | null, joining: { key: st
  * device stays let in at that PC alone. For any other account, and a device that is in no list, exactly
  * admitToAccount.
  */
-export async function admitWithList(list: AccountList | null, options: Omit<Parameters<typeof admitToAccount>[0], "allow"> & { joining: { key: string; label: string; os: Admission["os"] } }): Promise<AddRecord> {
+export async function admitWithList(list: AccountList | null, options: Omit<Parameters<typeof admitToAccount>[0], "allow"> & {
+  joining: { key: string; label: string; os: Admission["os"] };
+  /** what the approval is bound to, kept by the card for every Try again (listAllow.ts AllowScope): the list and the member key of its first read */
+  scope?: AllowScope;
+}): Promise<AddRecord> {
   // Whether this device goes by a list is read from what it holds itself: the view this page drew, or the copy in its
   // own store. With neither it has no list to write to, and the approval goes as before lists, at once: it waits for
   // no answer of the account service's about lists, and nothing that fails there holds it back.
@@ -361,7 +365,7 @@ export async function admitWithList(list: AccountList | null, options: Omit<Para
   if (!view.reached) throw new ListAllowError("unreached", null);
   let offer: ListOffer | null = null;
   const add = await admitToAccount({ ...options, allow: async () => {
-    offer = await allowIntoList(list, options.joining, { account: options.account, ...(options.wait === undefined ? {} : { wait: options.wait }) });
+    offer = await allowIntoList(list, options.joining, { account: options.account, ...(options.scope === undefined ? {} : { scope: options.scope }), ...(options.wait === undefined ? {} : { wait: options.wait }) });
     // an account that turns out to have no list for this device to write (it lost its copy meanwhile) admits nobody the old way from here
     if (offer === null) throw new ListAllowError("blocked", null);
     return offer;

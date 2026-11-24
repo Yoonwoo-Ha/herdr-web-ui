@@ -437,7 +437,7 @@ describe("what an Allow answers for a key the list holds no more, and what it ke
       const claim = (await writer.service.listClaims(writer.list)).find((each) => each.key === newcomer.key)!;
       const entry = await signListEntry(writer.state, { kind: "device", key: claim.key, power: "full", role: "drive", until: null, enc: claim.enc, card: claim.card, sealed: null, rotates: false }, { key: writer.keys.key, privateKey: writer.keys.signs }, writer.issued_at + (label === "second" ? 1 : 0));
       signed.push(entry.text);
-      return first.list.keep(writer, { entries: [entry.text], wraps: [], place: { seq: entry.state.footing.seq, hash: entry.state.footing.hash } });
+      return first.list.keep(writer, { entries: [entry.text], wraps: [], place: { seq: entry.state.footing.seq, hash: entry.state.footing.hash }, for: `allow:${newcomer.key}` });
     };
     const [one, two] = [await sign("first"), await sign("second")];
     expect(signed[0]).not.toBe(signed[1]);

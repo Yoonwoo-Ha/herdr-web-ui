@@ -4,9 +4,9 @@
  * signing key and an encryption key of its own, the account lists it, and it posts its keys and its card with its own
  * relay proof, which is what the account service asks before it places a `pc` entry for it.
  */
-import { signCard } from "../../../shared/account-list.ts";
+import { namesFields, sealEpoch, signCard, signListEntry } from "../../../shared/account-list.ts";
 import { FakeAccountService } from "../../../shared/account-service-fake.ts";
-import { generateStoredEncryptionKey } from "../../../shared/account-list-seal.ts";
+import { generateStoredEncryptionKey, sealFields, wrapEpochKey, wrapToText } from "../../../shared/account-list-seal.ts";
 import { exportAccountKey } from "../../../shared/account-records.ts";
 import { generateKeyPair } from "../../../shared/relay-e2ee.ts";
 import { answerServerChallenge, deriveServerId } from "../../../shared/relay-server-proof.ts";
@@ -127,4 +127,26 @@ export function listWorld(account = "acct_owner", start = 1_795_000_000_000) {
     return list;
   };
   return { account, origin, clock, fake, device, held };
+}
+
+/**
+ * A device that is in the list adds a PC under a sealed name, as a person's Add does: the account lists the PC, the PC
+ * posts its keys and its card, and the device signs the `pc` entry and wraps the epoch key to the PC. `label`: the
+ * name the list seals; the account service's directory names it "PC".
+ */
+export async function addListPc(world: ReturnType<typeof listWorld>, from: WorldDevice, label: string): Promise<AskingPc> {
+  await from.list.sync();
+  const writer = from.list.writer();
+  if (writer === null) throw new Error("The device writes nothing to the list");
+  const pc = await askingPc();
+  const card = await postPcKeys(world.fake.fetch, world.origin, from.session.access_token, pc, writer.list);
+  const where = sealEpoch(writer.state, writer.clock);
+  const key = writer.epochs.get(writer.state.epoch);
+  if (where === null || key === undefined) throw new Error("No name may be sealed where the list stands");
+  const sealed = { epoch: where.epoch, bytes: await sealFields({ place: { list: writer.list, seq: writer.state.footing.seq + 1 }, epoch: key, commitment: where.opens, fields: namesFields({ label, os: "linux" }) }) };
+  const written = await signListEntry(writer.state, { kind: "pc", key: pc.key, endpoint: pc.endpoint, enc: pc.enc, card, sealed }, { key: writer.keys.key, privateKey: writer.keys.signs }, writer.issued_at);
+  const wrap = await wrapEpochKey({ list: writer.list, epoch: key, member: pc.enc });
+  await writer.service.placeEntries(writer.list, [written.text], wrap === null ? [] : [{ epoch: key.epoch, member: pc.enc, wrap: wrapToText(wrap) }]);
+  await from.list.sync();
+  return pc;
 }

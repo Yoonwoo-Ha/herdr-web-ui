@@ -2,7 +2,7 @@
 import { createElement, StrictMode } from "react";
 import { createRoot, type Root } from "react-dom/client";
 import { encodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
-import { AccountOpenUnsupportedError, RelayPcOfflineError } from "../../../shared/relay-channel.ts";
+import { AccountListUnsupportedError, AccountOpenUnsupportedError, RelayPcOfflineError } from "../../../shared/relay-channel.ts";
 import { MuxProtocolError } from "../../../shared/relay-mux.ts";
 import { RelayShell } from "../../components/RelayShell.tsx";
 import { accountDevice, withAccountDevice } from "../account/accountDevice.ts";
@@ -33,11 +33,12 @@ import { offerFromCode, TypedCodeError } from "./pairCode.ts";
 import { ADMISSION_WAIT_MS, ConsentChangedError, createAccountController } from "./accountController.ts";
 import { keepShellAccount } from "../account/hostedSignIn.ts";
 import { AccountPcError } from "../account/join.ts";
-import { refusalOf } from "./firstLink.ts";
+import { listRemovedLink, refusalOf } from "./firstLink.ts";
 import { CHECK_GAP_MS, createPcSweep } from "./pcSweep.ts";
 import type { PcFinding, ProbeTarget } from "./pcStatus.ts";
 import { accountOpenablePcs, keepLaunchTried, lastFirst, launchTried, openablePcs } from "./pcPick.ts";
 import { PAGE_LEAVING_EVENT } from "../paneLifetime.ts";
+import { notePcTap, takePcTap } from "./pcTap.ts";
 import { createUpdateFlow, loadObservedVersions, observedVersions, reloadPage, freshShellNext, forgetSavedPc } from "./updateFlow.ts";
 export type { RelayShellMount } from "./shellState.ts";
 export { forgetSavedPc } from "./updateFlow.ts";
@@ -171,8 +172,9 @@ function launchOrder(devices: readonly RelayDevice[], opens: boolean, signedIn =
  * too (security-triage, #16): the request grants nothing, and its approval opens no session without a tap (App). One
  * this device may sign in to by the account's key is not asked: its sheet waits for the press that opens it that way.
  */
-function accountLaunchPcs(pcs: readonly MyPc[]): (MyPc & { readonly join: NonNullable<MyPc["join"]> })[] {
-  const open = pcs.filter((pc): pc is MyPc & { readonly join: NonNullable<MyPc["join"]> } => !pc.paired && pc.join !== undefined && pc.state !== "offline");
+export function accountLaunchPcs(pcs: readonly MyPc[]): (MyPc & { readonly join: NonNullable<MyPc["join"]> })[] {
+  // never a PC that this device's list of the account does not hold: its row waits for a tap
+  const open = pcs.filter((pc): pc is MyPc & { readonly join: NonNullable<MyPc["join"]> } => !pc.paired && pc.join !== undefined && pc.state !== "offline" && pc.notInList !== true);
   const last = lastPc();
   const seen = (pc: MyPc): number => pc.last_seen_at === null ? 0 : Date.parse(pc.last_seen_at);
   return [...open].sort((a, b) => Number(b.server_id === last) - Number(a.server_id === last) || seen(b) - seen(a));
@@ -209,6 +211,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   // by the app as it starts, so an off PC keeps its failure card. The mark is dropped from the address at once
   const picked = scoped && entryHash === "#picked";
   if (picked) window.history.replaceState(null, "", window.location.pathname + window.location.search);
+  // whether a person's press led to this PC's page just now: on the phone app's connect screen, or on a link to it on
+  // the page before. Read once, so a reload, a restored tab and a page the app reopened by itself come without it
+  const tappedPc = takePcTap();
+  const tapped = entry.serverId !== null && (picked || tappedPc === entry.serverId);
   // `left`: the launch sent this page to a PC: nothing more is drawn or probed on the way out
   let launching = !scoped && entryHash === "", signedInNow = false, left = false, launched = false, accountLaunch = false;
   // the card a launch waits on for the account's PCs: only while it is the screen does a read of them go on with the launch
@@ -240,6 +246,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     let id: string | null = null;
     try { id = link === null ? null : serverIdOfPath(new URL(link.getAttribute("href") ?? "", window.location.href).pathname); } catch { /* not an address */ }
     if (id !== null && launchJoinFor(id)) keepLaunchJoin(null);
+    // and that press is the word a PC waits for which nothing but a press may open (openUnpaired)
+    if (id !== null) notePcTap(id);
   };
   document.addEventListener("click", pressedJoin, true);
   const iosTab = iosBrowserTab({ userAgent: navigator.userAgent, maxTouchPoints: navigator.maxTouchPoints ?? 0, standalone: "standalone" in navigator && navigator.standalone === true });
@@ -344,7 +352,28 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
    */
   const codeLapsed = (offer: RelayOffer): boolean => offer.code !== undefined && offer.admission === 1 && scanned?.offer === offer && Date.now() - scanned.at > SIGN_IN_MS;
   const askNewScan = (offer: RelayOffer): void => { show({ kind: "failed", failure: "scan-expired", name: offer.name ?? null, detail: null, server_id: offer.server_id }); };
-  const account = createAccountController(mount, { active: frontUp, changed: accountChanged, outdated: () => new Set([...observedVersions()].filter(([, value]) => value.outdated).map(([id]) => id)) });
+  /**
+   * Reconnecting by itself is opening by itself. A session this device opened with its list key goes on only while
+   * its own copy of the list holds that PC and this device: once the copy says otherwise, the session is ended here
+   * and not opened again by itself, and the screen says what the list says. A PC the list put out need not end the
+   * session itself, and a PC that was taken over would not.
+   */
+  const listMoved = (): void => {
+    const open = transport, attempt = last;
+    if (open === null || attempt === null || attempt.listOpen === undefined) return;
+    const says = account.listSays(attempt.offer.server_id);
+    if (says === "holds" || says === "unknown") return;
+    transport = null;
+    app?.unmount();
+    app = null;
+    updates.cancel();
+    open.close();
+    // the list put the PC out: the words of a PC that was removed from the account, and nothing is forgotten
+    if (says === "pc-out") { show({ kind: "failed", failure: "list-removed", name: attempt.offer.name ?? null, detail: null, server_id: attempt.offer.server_id }); return; }
+    // the list holds this device no more (or its time is over): as when the PC refuses its key, which it would
+    void failed(new MuxProtocolError("auth_failed", "This device's copy of the account's list holds it no more"), attempt);
+  };
+  const account = createAccountController(mount, { active: frontUp, changed: accountChanged, listMoved, outdated: () => new Set([...observedVersions()].filter(([, value]) => value.outdated).map(([id]) => id)) });
   accountRead = !account.enabled;
   // the PC page this shell opens acts on the account through these: Settings → Devices and PCs → Manage account
   keepShellAccount(account.enabled ? {
@@ -668,19 +697,27 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
    * for, or for a PC whose join card a launch put up (only a press on its link ends that card).
    */
   const accountOpenOf = (pc: MyPc): Attempt | null => {
-    const openKey = account.openKey;
-    if (!pc.join || pc.accountOpen !== true || openKey === null || launchJoinFor(pc.server_id)) return null;
+    if (!pc.join || launchJoinFor(pc.server_id)) return null;
     const fresh = newPcs([pc], Date.now()).length > 0;
-    return { offer: { v: 1, server_id: pc.server_id, ...pc.join, name: pc.name }, code: false, paired: true, accountOpen: openKey, ...(fresh ? { freshPc: true as const } : {}) };
+    const offer = { v: 1 as const, server_id: pc.server_id, ...pc.join, name: pc.name };
+    // A PC the account's signed list holds is opened with the key that list holds for this device. A PC that follows
+    // no list refuses that (AccountListUnsupportedError), and the way from before is tried (failed). A PC the list
+    // does not hold is opened the way from before, and says so itself where it follows the list all the same (failed).
+    const listKey = account.listHolds(pc.server_id) ? account.listKey : null;
+    if (listKey !== null) return { offer, code: false, paired: true, listOpen: listKey, ...(fresh ? { freshPc: true as const } : {}) };
+    const openKey = account.openKey;
+    if (pc.accountOpen !== true || openKey === null) return null;
+    return { offer, code: false, paired: true, accountOpen: openKey, ...(fresh ? { freshPc: true as const } : {}) };
   };
   /**
-   * A press on the join sheet of a PC inside its 24 hours in the account, which nothing opens without that press: the
-   * account's own way first, as a load takes for a PC past them, then the join on a refusal (failed). Null when that way
-   * cannot be tried here, or for any other PC, whose press sends the join alone, as before.
+   * A press on the join sheet of a PC that nothing opens without that press (one inside its 24 hours in the account, or
+   * one the account names that this device's list does not hold): the account's own way first, as a load takes for
+   * any other PC, then the join on a refusal (failed). Null when that way cannot be tried here, or for any other PC,
+   * whose press sends the join alone, as before.
    */
   const pressedAccountOpen = (serverId: string): Attempt | null => {
     const pc = rowToJoin(serverId);
-    const open = pc !== undefined && isNewAccountPc(pc, Date.now()) ? accountOpenOf(pc) : null;
+    const open = pc !== undefined && (isNewAccountPc(pc, Date.now()) || pc.notInList === true) ? accountOpenOf(pc) : null;
     return open === null ? null : { ...open, pressed: true };
   };
   /**
@@ -705,11 +742,45 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   const failed = async (error: unknown, attempt: Attempt): Promise<void> => {
     if (last !== attempt) return;
     comparison = null;
-    const refusal = attempt.accountOpen === undefined ? null : openRefusalOf(error);
+    // This device was let into its account's list for a limited time, and by its own copy that time is over: the PC
+    // ended its session, or refused its key, for that. Nobody removed it, so nothing is forgotten and no join is asked
+    // for by itself: the screen says that its time is over.
+    if (attempt.listOpen !== undefined && error instanceof MuxProtocolError && (error.code === "auth_revoked" || error.code === "auth_failed") && account.listTimeOver()) {
+      show({ kind: "failed", failure: "list-time-over", name: attempt.offer.name ?? null, detail: null, server_id: attempt.offer.server_id });
+      return;
+    }
+    // The PC follows no list, and this device came with its list key: the way from before, once. And the other way
+    // round: the PC lets its account's devices in by the list (`account_list_required`, or its session ended as a
+    // row that changed, at the moment it pinned), so the device reads its list and comes with its list key, once,
+    // whether or not its copy names that PC: a PC that follows this device's list lets in the keys that list holds.
+    // (only while the list still holds that PC: one it put out meanwhile is not opened the way from before by itself)
+    if (attempt.listOpen !== undefined && error instanceof AccountListUnsupportedError && !attempt.retriedListOpen && account.listHolds(attempt.offer.server_id)) {
+      const openKey = account.openKey;
+      const { listOpen: _key, ...rest } = attempt;
+      if (openKey !== null) { await connect({ ...rest, accountOpen: openKey, retriedListOpen: true }); return; }
+    }
+    if (attempt.listOpen === undefined && error instanceof MuxProtocolError && error.code === "account_list_required" && !attempt.retriedListOpen) {
+      await account.readList();
+      if (last !== attempt) return;
+      const listKey = account.listKey;
+      const { accountOpen: _key, ...rest } = attempt;
+      if (listKey !== null) { await connect({ ...rest, listOpen: listKey, retriedListOpen: true }); return; }
+      // A pairing of a device with no list to answer with (no account here, or an account that keeps none) is told by
+      // this what `auth_failed` tells it: the PC holds that pairing no more. It is read as that, and never leads to a
+      // join. (A sign-in through the account that is not let in asks to join, as before.)
+      if (attempt.accountOpen === undefined && !account.knowsList) { await failed(new MuxProtocolError("auth_failed", error.message), attempt); return; }
+    }
+    const refusal = attempt.accountOpen === undefined && attempt.listOpen === undefined ? null : openRefusalOf(error);
     // a PC answers a key it does not list with a bare auth_failed (server/relay/session.ts): after a press on a new PC's
     // sheet, that is the account's way refused too, and the join follows; this device was never in, so nothing is removed
     const unlisted = attempt.pressed === true && error instanceof MuxProtocolError && error.code === "auth_failed";
-    const step = attempt.accountOpen !== undefined && (error instanceof AccountOpenUnsupportedError || unlisted) ? { kind: "pair" as const }
+    // a list key the PC does not hold, or holds no more, is `auth_failed` too: the device is not in that PC's list, and
+    // the way in is to be let in again (the join)
+    const notInList = attempt.listOpen !== undefined && (error instanceof AccountListUnsupportedError || (error instanceof MuxProtocolError && (error.code === "auth_failed" || error.code === "account_list_required")));
+    // and a device that came with another key, and that the read above found no place for in the list, is not in it
+    // either: the PC took nothing away from it, and the way in is the same
+    const notLetIn = attempt.listOpen === undefined && error instanceof MuxProtocolError && error.code === "account_list_required";
+    const step = notInList || notLetIn || (attempt.accountOpen !== undefined && (error instanceof AccountOpenUnsupportedError || unlisted)) ? { kind: "pair" as const }
       : refusal === null ? null : nextOpenStep(refusal, attempt.retriedAccountOpen === true);
     if (step !== null) {
       switch (step.kind) {
@@ -817,7 +888,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     let opened: RelayTransport;
     try {
       // a saved pairing signs in with the row its record names: that row is the one this attempt may forget
-      if (attempt.paired && attempt.accountOpen === undefined && attempt.row === undefined) {
+      if (attempt.paired && attempt.accountOpen === undefined && attempt.listOpen === undefined && attempt.row === undefined) {
         attempt.row = (await store.get(attempt.offer.server_id))?.device_id ?? null;
         if (controller.signal.aborted) return;
       }
@@ -827,7 +898,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
         controller.signal.throwIfAborted();
         if (session?.sign_in_id !== accountOpen.sign_in_id || session.account !== accountOpen.account) throw new SignedOutError();
       }
-      const prepared = accountOpen === undefined ? await account.prepare(attempt.offer, controller.signal, consentOf(attempt)) : {};
+      const listOpen = attempt.listOpen;
+      const prepared = accountOpen === undefined && listOpen === undefined ? await account.prepare(attempt.offer, controller.signal, consentOf(attempt)) : {};
       attempt.accountEnrollment = prepared.accountKey !== undefined;
       if (!attempt.paired) {
         const marked = attempt.offer.code !== undefined && attempt.offer.admission === 1;
@@ -841,6 +913,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
         store, label, signal: controller.signal,
         ...prepared,
         ...(accountOpen === undefined ? {} : { store: withAccountDevice(store, accountDevice(attempt.offer, accountOpen.key)), accountOpensAll: true }),
+        ...(listOpen === undefined ? {} : { store: withAccountDevice(store, accountDevice(attempt.offer, listOpen)), accountListKey: true }),
         ...(directSocket ? { directSocket, ...(directTailnet ? { directTailnet } : {}) } : {}),
         ...(!attempt.paired && attempt.offer.code !== undefined ? {
           keyProof: (keyFingerprint: string) => {
@@ -900,7 +973,10 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // the update screen included) signs with the saved device key instead of pairing again
     const { code, ...saved } = attempt.offer;
     const fresh = !attempt.paired || attempt.fresh === true;
-    const enrolled: Attempt = { offer: saved, code: false, paired: true, accountEnrollment: attempt.accountEnrollment === true, retryEnrollment: attempt.retryEnrollment === true, ...(attempt.row === undefined ? {} : { row: attempt.row }), ...(fresh ? { fresh: true, introducible: attempt.paired ? attempt.introducible === true : !attempt.code } : {}), ...(attempt.accountless ? { accountless: true } : {}), ...(attempt.signIn ? { signIn: attempt.signIn } : {}), ...(attempt.accountOpen ? { accountOpen: attempt.accountOpen } : {}), ...(attempt.retriedAccountOpen ? { retriedAccountOpen: true } : {}) };
+    const enrolled: Attempt = { offer: saved, code: false, paired: true, accountEnrollment: attempt.accountEnrollment === true, retryEnrollment: attempt.retryEnrollment === true, ...(attempt.row === undefined ? {} : { row: attempt.row }), ...(fresh ? { fresh: true, introducible: attempt.paired ? attempt.introducible === true : !attempt.code } : {}), ...(attempt.accountless ? { accountless: true } : {}), ...(attempt.signIn ? { signIn: attempt.signIn } : {}), ...(attempt.accountOpen ? { accountOpen: attempt.accountOpen } : {}), ...(attempt.retriedAccountOpen ? { retriedAccountOpen: true } : {}),
+      // which key this session signed in with stays with it: a refusal at a later reconnect is read by that. That the
+      // other key was tried once on the way here ends with this sign-in: a PC that pins later is asked once more
+      ...(attempt.listOpen ? { listOpen: attempt.listOpen } : {}) };
     last = enrolled;
     if (code !== undefined && entry.offer !== null) entry = { ...entry, offer: null };
     transport = opened;
@@ -986,7 +1062,7 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
   /** Forgets the attempt's own row (Attempt.row), or the saved record when the attempt never knew one. */
   const forgetRow = async (attempt: Attempt): Promise<void> => {
-    if (attempt.accountOpen !== undefined || attempt.row === null) return;
+    if (attempt.accountOpen !== undefined || attempt.listOpen !== undefined || attempt.row === null) return;
     if (attempt.row === undefined) await store.remove(attempt.offer.server_id);
     else await store.removeRow(attempt.offer.server_id, attempt.row);
   };
@@ -1018,7 +1094,8 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
   };
   const enroll = (opened: RelayTransport, attempt: Attempt, settled?: () => void, signal?: AbortSignal): void => {
     // the confirm said this device gets a key of its own: a sign-in stored since then adds nothing to its account here
-    if (attempt.accountless || attempt.accountOpen !== undefined) return;
+    // a sign-in through the account, by the registered key or by the list's: no pairing of this device's to enroll
+    if (attempt.accountless || attempt.accountOpen !== undefined || attempt.listOpen !== undefined) return;
     enrolling.add(opened);
     const done = account.enroll(opened, attempt.offer.server_id, attempt.fresh === true, attempt.fresh === true && attempt.introducible === true, { consent: consentOf(attempt), ...(settled ? { settled } : {}), ...(signal ? { signal } : {}) }).then((enrollment) => {
       // the new row's link passed (or none was needed): the record it replaced is no longer kept
@@ -1026,6 +1103,16 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
       if (app === null && last === attempt && shown?.kind === "ready") show({ ...shown, enrollment });
     }, (error: unknown) => {
       if (linkRefused(opened, attempt, error)) return;
+      // The account's signed list removed this PC, and it takes no link into that account until it is a new PC. This
+      // pairing was not made for the account alone (no mark), so it stands and nothing is forgotten; while its own
+      // screen is still up, that screen says why the account did not take the PC, in place of the app.
+      if (listRemovedLink(error) && app === null && last === attempt && transport === opened && (shown?.kind === "connecting" || shown?.kind === "ready")) {
+        frontSteps?.abort();
+        frontSteps = null;
+        transport = null;
+        show({ kind: "failed", failure: "list-removed", name: attempt.offer.name ?? null, detail: null, server_id: attempt.offer.server_id });
+        return;
+      }
       console.warn("Ovis: this PC did not join the account yet", error instanceof Error ? error.name : error);
       if (app === null && last === attempt && shown?.kind === "ready") show({ ...shown, enrollment: "failed" });
     }).finally(() => { enrolling.delete(opened); if (transport !== opened) opened.close(); });
@@ -1291,7 +1378,9 @@ export async function mountRelayShell(mount: RelayShellMount): Promise<void> {
     // a PC new in the account that no device is in yet takes the number its own screen shows, as the dashboard's Add
     // does; any other asks a device already in to approve. The account's own way in, refused, falls back the same way
     const fresh = joinable !== undefined && newPcs([joinable], Date.now()).length > 0;
-    const open = joinable === undefined || isNewAccountPc(joinable, Date.now()) ? null : accountOpenOf(joinable);
+    // A PC the account names that this device's list does not hold is opened only on a press, at every open: by the
+    // press that led here, or by the one on the sheet this page puts up (pressedAccountOpen).
+    const open = joinable === undefined || isNewAccountPc(joinable, Date.now()) || (joinable.notInList === true && !tapped) ? null : accountOpenOf(joinable);
     if (open !== null) {
       await connect(open);
     } else if (joinable !== undefined) {
