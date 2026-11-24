@@ -367,3 +367,16 @@ describe("downloading a release file", () => {
     }
   });
 });
+
+it("keeps the caller's deadline through a redirect", async () => {
+  const controller = new AbortController();
+  const fetchFile = (async (url: string | URL | Request, init?: RequestInit) => {
+    if (String(url).endsWith("/one")) {
+      controller.abort(new Error("keeper deadline"));
+      return new Response(null, { status: 302, headers: { location: "/two" } });
+    }
+    init?.signal?.throwIfAborted();
+    return new Response("too late");
+  }) as typeof fetch;
+  await expect(download("https://example.invalid/one", 32, "keeper", fetchFile, controller.signal)).rejects.toThrow("keeper deadline");
+});

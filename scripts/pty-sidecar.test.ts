@@ -1,9 +1,11 @@
 import { afterAll, beforeAll, describe, expect, it, spyOn } from "bun:test";
 import { createHash } from "node:crypto";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { copyFileSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { ACP_KEEPER, architectures, crateTree, expectedArchitectures, install, TREE_RELEASE, type Manifest } from "./pty-sidecar.ts";
+
+import { generateKeyPair, PTY_ASSETS, SERVER_PLATFORMS, releaseFile, DIST_ARCHIVE, signManifest, writeManifest, RELEASE_PUBLIC_KEY } from "./server-manifest.ts";
 
 const version = (JSON.parse(readFileSync(join(import.meta.dir, "..", "package.json"), "utf8")) as { version: string }).version;
 const HOST = "#!/bin/sh\nprintf 'pty-sidecar: usage: fixture\\n' >&2\nexit 2\n";
@@ -236,25 +238,57 @@ describe.skipIf(!("tree" in crateTree()) || !("tree" in crateTree(undefined, ACP
 
 describe("pty-sidecar-attach.sh", () => {
   const ATTACH = join(import.meta.dir, "pty-sidecar-attach.sh");
-  function attach(view: string | null): { code: number; uploads: string[]; stderr: string } {
+  function attach(view: string | null, signed?: "good" | "changed"): { code: number; uploads: string[]; stderr: string } {
     const dir = mkdtempSync(join(tmpdir(), "ovis-pty-attach-"));
     try {
       const set = join(dir, "set");
       mkdirSync(set);
       writeFileSync(join(set, "ovis-pty-sidecar.json"), JSON.stringify({ version }));
-      for (const name of ["ovis-pty-sidecar-linux-x64", "ovis-acp-keeper-linux-x64", "ovis-acp-keeper.json", "SHA256SUMS"]) writeFileSync(join(set, name), "x");
+      for (const build of PTY_ASSETS) for (const prefix of ["ovis-pty-sidecar", "ovis-acp-keeper"]) writeFileSync(join(set, prefix + "-" + build), prefix + build);
+      for (const name of ["ovis-acp-keeper.json", "SHA256SUMS"]) writeFileSync(join(set, name), "metadata");
+      const docs = join(dir, "docs"); mkdirSync(docs);
+      let script = ATTACH;
+      if (signed) {
+        const key = generateKeyPair();
+        for (const build of PTY_ASSETS) for (const prefix of ["ovis-pty-sidecar", "ovis-acp-keeper"]) copyFileSync(join(set, prefix + "-" + build), join(docs, prefix + "-" + build));
+        for (const file of [...SERVER_PLATFORMS.map(releaseFile), DIST_ARCHIVE]) writeFileSync(join(docs, file), file);
+        writeManifest(docs, { version, sources: { server: "a".repeat(40), shared: "b".repeat(40) } }); signManifest(docs, key.privateKeyPem);
+        script = join(dir, "pty-sidecar-attach.sh");
+        for (const f of ["pty-sidecar-attach.sh", "verify-repair.ts", "release-assets.ts", "server-release-files.ts", "server-manifest.ts"]) copyFileSync(join(import.meta.dir, f), join(dir, f));
+        const verifier = join(dir, "server-manifest.ts"); writeFileSync(verifier, readFileSync(verifier, "utf8").replace(RELEASE_PUBLIC_KEY, key.publicKey));
+        if (signed === "changed") writeFileSync(join(set, "ovis-acp-keeper-linux-arm64"), "different build");
+      }
       const bin = join(dir, "bin");
       mkdirSync(bin);
       const log = join(dir, "gh.log");
       const assets = join(dir, "assets.txt");
       if (view !== null) writeFileSync(assets, `${view}\n`);
       const answer = view === null ? `echo "HTTP 502: Bad Gateway" >&2; exit 1` : `cat "${assets}"`;
-      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\ncase "$2" in view) ${answer} ;; upload) exit 0 ;; esac\n`, { mode: 0o755 });
-      const run = Bun.spawnSync(["bash", ATTACH, `v${version}`, set], { env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` }, stdout: "pipe", stderr: "pipe" });
+      writeFileSync(join(bin, "gh"), `#!/bin/sh\necho "$*" >> "${log}"\ncase "$2" in view) ${answer} ;; download) cp "${docs}/$5" "$7" ;; upload) exit 0 ;; esac\n`, { mode: 0o755 });
+      const run = Bun.spawnSync(["bash", script, `v${version}`, set], { env: { ...process.env, PATH: `${bin}:${process.env["PATH"]}` }, stdout: "pipe", stderr: "pipe" });
       const calls = existsSync(log) ? readFileSync(log, "utf8").split("\n").filter(Boolean) : [];
       return { code: run.exitCode, uploads: calls.filter((call) => call.startsWith("release upload")), stderr: run.stderr.toString() };
     } finally { rmSync(dir, { recursive: true, force: true }); }
   }
+
+  it("never uploads when the published keeper companion cannot be authenticated", () => {
+    const result = attach("ovis-acp-keeper-server.json\novis-acp-keeper-server.json.sig");
+    expect(result.code).not.toBe(0);
+    expect(result.uploads).toEqual([]);
+  });
+
+  it("refuses a rebuilt keeper that differs from the authenticated published bytes", () => {
+    const result = attach("ovis-acp-keeper-server.json", "changed");
+    expect(result.code).not.toBe(0);
+    expect(result.uploads).toEqual([]);
+  });
+
+  it("repairs only the host on releases that never signed keepers", () => {
+    const result = attach("Ovis.dmg");
+    expect(result.code).toBe(0);
+    expect(result.uploads).toHaveLength(2);
+    expect(result.uploads.join(" ")).not.toContain("ovis-acp-keeper");
+  });
 
   it("uploads nothing when the release lookup fails, so a complete set is never half replaced", () => {
     const result = attach(null);
@@ -270,7 +304,7 @@ describe("pty-sidecar-attach.sh", () => {
   });
 
   it("uploads the binaries before the manifests, and the host's last, to a release without the host", () => {
-    const result = attach("Ovis.dmg");
+    const result = attach("ovis-acp-keeper-server.json", "good");
     expect(result.code).toBe(0);
     expect(result.uploads).toHaveLength(3);
     expect(result.uploads[0]).toContain("--clobber");

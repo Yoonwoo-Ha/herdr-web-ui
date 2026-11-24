@@ -298,7 +298,7 @@ console.log(JSON.stringify({ install, stamp, status, calls, trees: sourceTrees()
   function checkout({ packages = true, client = true, stamp, git = false, key }: { packages?: boolean; client?: boolean; stamp?: string; git?: boolean; key?: string } = {}): string {
     const dir = join(scratch, "checkout");
     mkdirSync(join(dir, "scripts"), { recursive: true });
-    for (const file of ["plugin-launch.ts", "server-install.ts", "server-manifest.ts", "pty-sidecar.ts"]) copyFileSync(join(import.meta.dir, file), join(dir, "scripts", file));
+    for (const file of ["plugin-launch.ts", "server-install.ts", "install-keeper.ts", "server-release-files.ts", "server-manifest.ts", "release-assets.ts", "pty-sidecar.ts"]) copyFileSync(join(import.meta.dir, file), join(dir, "scripts", file));
     if (key !== undefined) {
       const manifest = join(dir, "scripts", "server-manifest.ts");
       writeFileSync(manifest, readFileSync(manifest, "utf8").replace(/export const RELEASE_PUBLIC_KEY = "[^"]*";/, `export const RELEASE_PUBLIC_KEY = ${JSON.stringify(key)};`));

@@ -30,14 +30,18 @@ function binaryDigest(installed: string): string {
  * so a rewrite of either within one tick of the file clock still counts; only the binary's hash is
  * cached, so attaches do not hash it again.
  */
-export function installedBinaryVouched(installed: string, packageJson: string | null = COMPILED ? null : join(dirname(installed), "..", "package.json")): boolean {
+export function installedBinaryDigest(installed: string, packageJson: string | null = COMPILED ? null : join(dirname(installed), "..", "package.json")): string | null {
   try {
     const record = JSON.parse(readFileSync(`${installed}.json`, "utf8")) as { sha256?: unknown; version?: unknown };
     const version = packageJson === null ? builtVersion : (JSON.parse(readFileSync(packageJson, "utf8")) as { version?: unknown }).version;
-    return typeof record.sha256 === "string" && record.version === version && binaryDigest(installed) === record.sha256;
+    return typeof record.sha256 === "string" && record.version === version && binaryDigest(installed) === record.sha256 ? record.sha256 : null;
   } catch {
-    return false;
+    return null;
   }
+}
+
+export function installedBinaryVouched(installed: string, packageJson?: string | null): boolean {
+  return installedBinaryDigest(installed, packageJson) !== null;
 }
 
 export type BinaryVerdict = { ok: true } | { ok: false; reason: string };
@@ -60,7 +64,7 @@ export function runBounded(argv: string[], env: Record<string, string | undefine
   try {
     const result = Bun.spawnSync(argv, { env: clean, stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: timeoutMs, killSignal: "SIGKILL" });
     if (result.exitedDueToTimeout) return { reason: `no answer in ${timeoutMs} ms` };
-    if (result.signalCode != null) return { reason: result.signalCode };
+    if (result.signalCode != null) return { reason: String(result.signalCode) };
     return { exitCode: result.exitCode ?? -1, first: result.stderr.toString().split("\n")[0] ?? "" };
   } catch (error) {
     return { reason: spawnErrorReason(error) };

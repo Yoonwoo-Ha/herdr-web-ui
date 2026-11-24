@@ -97,9 +97,9 @@ export interface ArtifactOptions {
    * Windows', which carries no Node to run them
    */
   nodePty: boolean;
-  ptySidecar?: { binary: string; record?: string };
+  ptySidecar?: { binary: string; record?: string; sha256?: string };
   /** the ACP keeper (crates/acp-keeper), carried and vouched for as the PTY host is */
-  acpKeeper?: { binary: string; record?: string };
+  acpKeeper?: { binary: string; record?: string; sha256?: string };
   downloads?: string;
   build?: (platform: ServerPlatform, outfile: string) => Promise<void>;
   nodeModules?: string;
@@ -134,7 +134,9 @@ export async function stageServerArtifact(options: ArtifactOptions): Promise<voi
     copyFileSync(carried.binary, binary);
     chmodSync(binary, 0o755);
     // the record the server checks before it runs the binary (server/native-binary.ts): in the binary, for the version compiled into it
+    const digest = sha256(readFileSync(binary));
+    if (carried.sha256 !== undefined && digest !== carried.sha256) throw new Error(`Staged ${name} does not match its verified SHA-256`);
     const record = carried.record ? JSON.parse(readFileSync(carried.record, "utf8")) as Record<string, unknown> : { crate: null };
-    writeFileSync(`${binary}.json`, `${JSON.stringify({ ...record, sha256: sha256(readFileSync(binary)), version: packageJson().version })}\n`);
+    writeFileSync(`${binary}.json`, `${JSON.stringify({ ...record, sha256: digest, version: packageJson().version })}\n`);
   }
 }

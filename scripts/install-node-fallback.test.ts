@@ -15,7 +15,7 @@ function fn(name: string): string {
   if (!match) throw new Error(`install.sh defines no ${name}()`);
   return match[0];
 }
-const FUNCTIONS = ["say", "sha256", "kill_tree", "bounded", "rust_host_runs", "node_sha_for", "install_node", "server_arch", "node_fits", "node_link"].map(fn).join("\n");
+const FUNCTIONS = ["say", "sha256", "kill_tree", "bounded", "answers_usage", "rust_host_runs", "node_sha_for", "install_node", "server_arch", "node_fits", "node_link"].map(fn).join("\n");
 const NODE_DECISION = /^ {2}needs_node=""[\s\S]*?^ {2}node_link "\$code" "\$needs_node"$/m.exec(INSTALLER)?.[0] ?? "";
 
 const dir = mkdtempSync(join(tmpdir(), "ovis-install-node-"));

@@ -23,7 +23,11 @@ export function acpKeeperBin(env: Record<string, string | undefined> = process.e
     console.error(`OVIS_ACP_KEEPER_BIN=${chosen}: ${verdict.reason}; no ACP keeper`);
     return null;
   }
-  if (existsSync(paths.installed) && installedBinaryVouched(paths.installed) && runsAsKeeper(paths.installed, env).ok) return paths.installed;
-  if (existsSync(paths.build) && runsAsKeeper(paths.build, env).ok) return paths.build;
+  const installed: BinaryVerdict = !existsSync(paths.installed) ? { ok: false, reason: "not installed" }
+    : installedBinaryVouched(paths.installed) ? runsAsKeeper(paths.installed, env) : { ok: false, reason: "no matching installation record" };
+  if (installed.ok) return paths.installed;
+  const build: BinaryVerdict = existsSync(paths.build) ? runsAsKeeper(paths.build, env) : { ok: false, reason: "not built" };
+  if (build.ok) return paths.build;
+  console.error(`No ACP keeper: ${paths.installed}: ${installed.reason}; ${paths.build}: ${build.reason}`);
   return null;
 }

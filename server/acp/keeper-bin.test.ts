@@ -70,6 +70,20 @@ describe.skipIf(process.platform === "win32")("acpKeeperBin", () => {
     expect(acpKeeperBin({}, layout({}))).toBeNull();
   });
 
+  it("explains why an installed keeper cannot be used when there is no fallback", () => {
+    const said = spyOn(console, "error").mockImplementation(() => {});
+    try {
+      for (const [options, reason] of [
+        [{}, "not installed"],
+        [{ installed: KEEPER, record: "stale" }, "record"],
+        [{ installed: PTY_HOST, record: "vouches" }, "not the ACP keeper"],
+      ] as const) {
+        expect(acpKeeperBin({}, layout(options))).toBeNull();
+        expect(said).toHaveBeenLastCalledWith(expect.stringContaining(reason));
+      }
+    } finally { said.mockRestore(); }
+  });
+
   it.skipIf(!existsSync(ACP_KEEPER_BUILD))("passes the keeper cargo builds", () => {
     expect(acpKeeperBin({ OVIS_ACP_KEEPER_BIN: ACP_KEEPER_BUILD })).toBe(ACP_KEEPER_BUILD);
   });

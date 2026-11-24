@@ -128,8 +128,9 @@ It also builds the server as one compiled binary per platform (`server-binary`, 
 rest of the release, `bun scripts/build-server.ts release`): `ovis-server-linux-x64`, `-linux-arm64`,
 `-darwin-arm64`, `-darwin-x64` and `-windows-x64.exe`, and the built client the installers unpack beside the binary,
 `ovis-dist.tar.gz` (from `bun run build`), with `ovis-server.json` (the version, the git trees of `server/` and
-`shared/`, each file's SHA-256 and size, and those of the three Rust PTY host binaries, which `server-binary` waits
-for and copies in: the binary installers run no host but the one named there), `ovis-server.SHA256SUMS` and `ovis-server.json.sig`, an Ed25519
+`shared/`, each file's SHA-256 and size, and those of the Rust PTY hosts). The server manifest stays at schema 1,
+with exactly `schema`, `version`, `sources`, `assets`, `dist`, `pty`; the keeper changes neither its bytes nor its
+sums. The release also carries `ovis-server.SHA256SUMS` and `ovis-server.json.sig`, an Ed25519
 signature over the manifest's exact bytes. `server-binary-sign` signs on GitHub's runner: beside the key run only Bun,
 installed by the SHA-pinned `oven-sh/setup-bun`, and `scripts/server-manifest.ts`, which uses Node's built-ins; none
 of the repository's dependencies is installed there. `sign` refuses a key whose public half is not `RELEASE_PUBLIC_KEY`,
@@ -137,6 +138,13 @@ committed in `scripts/server-manifest.ts`; the job then verifies the folder for 
 that committed key. `server-binary-attest` attests the files, and `publish` verifies them again for that version
 against the committed key, never one a job reports, and attaches each by name, refusing a folder that holds anything
 else; the PTY hosts it attaches must be byte for byte the ones the manifest signed. A different key put into the secret fails the release at `sign`. The signature vouches for whatever `server-binary` built.
+
+The same step and key separately sign `ovis-acp-keeper-server.json` as `ovis-acp-keeper-server.json.sig`.
+It contains `schema: 1`, `version`, `serverSha256` (of the exact signed `ovis-server.json`), and `assets`.
+Each of `linux-x64`, `linux-arm64` and `darwin-universal` names its `file`, `sha256` and byte `size`.
+Publish regenerates this document from the binaries it will attach and compares the bytes before creating
+the release. Older installers never read the companion. New ones skip only the keeper if the companion,
+signature or binary is missing, damaged or for another server; a bad main manifest still fails the install.
 
 `bun scripts/build-server.ts verify <dir> --expect-version <X.Y.Z>` checks a downloaded set against the committed key
 (`--public-key <base64>` names another, for a test's own release), and stops at the first part that fails, with one

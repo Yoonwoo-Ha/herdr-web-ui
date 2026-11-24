@@ -398,7 +398,7 @@ jobs:
       - id: upgrade-fixtures
         name: Fetch the pinned upgrade fixtures
         run: |
-          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7
+          git fetch --no-tags --depth=1 origin refs/tags/v0.5.6:refs/tags/v0.5.6 refs/tags/v0.5.7:refs/tags/v0.5.7 refs/tags/v0.5.4:refs/tags/v0.5.4 refs/tags/v0.5.9:refs/tags/v0.5.9
           git cat-file -e 'c482ad601132ebb80c0013f9d9063d474eac96c1^{commit}'
           git cat-file -e 'acab7685663bebc0ce2e93c75b4e3c4048d9f0bb^{commit}'
       - run: bun run check fast

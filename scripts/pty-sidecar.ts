@@ -80,9 +80,9 @@ export function crateTree(cwd = root, crate = PTY_HOST.crate): { tree: string } 
   return { tree: tree.stdout.toString().trim() };
 }
 
-export function runsHere(path: string, part: Part = PTY_HOST): boolean {
+export function runsHere(path: string, part: Part = PTY_HOST, timeout = 5000): boolean {
   try {
-    const result = Bun.spawnSync([path], { stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout: 5000, killSignal: "SIGKILL" });
+    const result = Bun.spawnSync([path], { env: { PATH: "/usr/bin:/bin" }, stdin: "ignore", stdout: "ignore", stderr: "pipe", timeout, killSignal: "SIGKILL" });
     return result.exitCode === 2 && result.stderr.toString().startsWith(part.usage);
   } catch {
     return false;

@@ -25,8 +25,25 @@ if printf '%s\n' "$assets" | grep -qx ovis-pty-sidecar.json; then
   echo "::error::$tag already has the Rust PTY host." >&2
   exit 1
 fi
-# installs read a manifest first, so each goes after its binaries and the host's last: until it is there, a release
-# offers no host, and a run that failed halfway is repaired by running this again (--clobber replaces the rest)
-gh release upload "$tag" "$dir"/ovis-pty-sidecar-* "$dir"/ovis-acp-keeper-* "$dir/SHA256SUMS" --clobber
-gh release upload "$tag" "$dir/ovis-acp-keeper.json" --clobber
-gh release upload "$tag" "$dir/ovis-pty-sidecar.json"
+scratch=$(mktemp -d)
+trap 'rm -rf "$scratch"' EXIT
+mkdir "$scratch/set" "$scratch/docs"
+setdir="$scratch/set"
+hosts=(ovis-pty-sidecar-{linux-x64,linux-arm64,darwin-universal})
+keepers=(ovis-acp-keeper-{linux-x64,linux-arm64,darwin-universal})
+for file in "${hosts[@]}" ovis-pty-sidecar.json; do cp "$dir/$file" "$setdir/$file"; done
+if grep -qx ovis-acp-keeper-server.json <<<"$assets"; then
+  for file in ovis-server.json ovis-server.json.sig ovis-acp-keeper-server.json ovis-acp-keeper-server.json.sig; do
+    gh release download "$tag" --pattern "$file" --output "$scratch/docs/$file"
+  done
+  for file in "${keepers[@]}" ovis-acp-keeper.json SHA256SUMS; do cp "$dir/$file" "$setdir/$file"; done
+  bun "$(dirname "$0")/verify-repair.ts" "$setdir" "$scratch/docs" "$version"
+  gh release upload "$tag" "${hosts[@]/#/$setdir/}" "${keepers[@]/#/$setdir/}" "$setdir/SHA256SUMS" --clobber
+  gh release upload "$tag" "$setdir/ovis-acp-keeper.json" --clobber
+else
+  if grep -q '^ovis-acp-keeper' <<<"$assets"; then echo "Cannot repair an existing keeper without its signed companion" >&2; exit 1; fi
+  # Legacy host-only releases have no signed keeper identity. Never attach a keeper to them.
+  (cd "$setdir" && bun -e 'for (const f of process.argv.slice(1)) console.log(new Bun.CryptoHasher("sha256").update(await Bun.file(f).bytes()).digest("hex") + "  " + f)' "${hosts[@]}" >SHA256SUMS)
+  gh release upload "$tag" "${hosts[@]/#/$setdir/}" "$setdir/SHA256SUMS" --clobber
+fi
+gh release upload "$tag" "$setdir/ovis-pty-sidecar.json"
