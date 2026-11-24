@@ -4756,7 +4756,9 @@ Alert rows of the table above from the `--droplet-*` roles in `src/styles.css`.
 ### Voice input
 - A mic button sits beside the add button in the composer and beside Send in the terminal input line; it
   fills with `--accent` while recording. Dictated text is inserted at the caret, never sent.
-- `voiceInput`: `auto`, `on` or `off`; default `auto`. Auto puts the mic in the composer only, not on
+- `voiceInput`: `auto`, `on` or `off`; default `off`, as the composer's other extra buttons are
+  (few installs that saw the mic used it). A device that saved its settings before keeps what it
+  saved, Auto included: the record holds every row. Auto puts the mic in the composer only, not on
   a phone (the composer's `(max-width: 640px), (pointer: coarse)`), and leaves it out where dictation
   cannot work (no HTTPS, or no key and no browser recognition). On shows it in both inputs and on a
   phone, disabled with its reason where it cannot work.

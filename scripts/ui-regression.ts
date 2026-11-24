@@ -141,8 +141,8 @@ try {
   if (part === "main") {
     const context = await browser.newContext({ viewport: { width: 1280, height: 800 } });
     await context.addInitScript((ids) => {
-      // The pending-input cases exercise automatic queue delivery, which is opt-in.
-      if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true }));
+      // The pending-input cases exercise automatic queue delivery, and the dictation cases the mic, both opt-in.
+      if (!localStorage.getItem("ovis:settings")) localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", autoSendQueued: true, voiceInput: "auto" }));
       for (const id of ids) localStorage.setItem(`ovis:view:${id}`, "chat");
     }, panes);
     await context.addInitScript(rewriteMachinesFrames);
@@ -216,7 +216,7 @@ try {
     const composer = page.getByRole("textbox", { name: "Message", exact: true });
     await composer.waitFor();
     await page.locator(".composer .voice-mic").waitFor();
-    console.log("PASS a desktop's chat offers the mic before Settings is asked");
+    console.log("PASS a desktop's chat on Auto offers the mic before Settings is asked");
     assert.equal(await workspaceHeader(workspaces[0]!).locator(".workspace-name").textContent(), "ovis-test-browser-a",
       "Spaces names the workspace rather than its current pane");
     assert.equal(await workspaceGroup(workspaces[0]!).locator(".pane-select").count(), 1, "a workspace has one representative selector");

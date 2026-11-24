@@ -139,7 +139,7 @@ try {
     const context = await browser.newContext({ viewport: { width, height: 844 }, isMobile: touch, hasTouch: touch, locale: "en-US" });
     try {
       await context.addInitScript(({ theme, pane }) => {
-        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, darkTheme: "amber", lightTheme: "amber", autoSendQueued: true }));
+        localStorage.setItem("ovis:settings", JSON.stringify({ language: "en", theme, darkTheme: "amber", lightTheme: "amber", autoSendQueued: true, voiceInput: "auto" }));
         localStorage.setItem(`ovis:view:${pane}`, "chat");
       }, { theme, pane: owner });
       const page = await context.newPage();
