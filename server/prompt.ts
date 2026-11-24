@@ -1197,6 +1197,17 @@ async function readKnownPrompt(
   if (agent === "hermes" && prompt !== null && parsedByPublicPrompt.get(prompt)?.responder === "hermes-approval" && !(await hermesOwnsInput(paneId))) {
     return { prompt: null, screen, suppressFallback: true };
   }
+  // its dangerous-command panel, with the command its state.db holds when the panel shows it whole (record-cards.ts)
+  const hermesApproval = agent === "hermes" && prompt !== null ? parsedByPublicPrompt.get(prompt) : undefined;
+  if (hermesApproval?.responder === "hermes-approval") {
+    const request = await recordRequest(paneId, agent);
+    const bound = (card: InteractivePrompt): InteractivePrompt => {
+      const parsed = parsedByPublicPrompt.get(card);
+      return parsed ? publicPrompt(withRecord(parsed, request, screen, recordFor(agent)!)) : card;
+    };
+    prompt = bound(prompt!);
+    rebind = bound;
+  }
   // and every card pi's own dialogs and questionnaires draw, which answer by keys (pi-ask's form answers
   // through the extension and returned above; omo's cards on a pane herdr names pi keep their own checks)
   if (agent === "pi" && prompt !== null && parsedByPublicPrompt.get(prompt)?.responder?.startsWith("pi-") && !(await piOwnsInput(paneId))) {

@@ -3,7 +3,10 @@ import { sep } from "node:path";
 
 import type { MarkdownDocument } from "../shared/files.ts";
 import type { FileInfo, OmoTask, SlashCommand } from "../shared/protocol.ts";
-import { agyCatalog } from "./agy.ts";
+import { agyCatalog, agyPendingSteps } from "./agy.ts";
+import type { AgyPendingStep } from "./dialogs/agy-record.ts";
+import type { HermesMessage } from "./dialogs/hermes-record.ts";
+import { hermesPendingMessages } from "./hermes.ts";
 import { recordTail } from "./record-tail.ts";
 import type { HistoryEvidence } from "./claude-command-history.ts";
 import { wholeClaudeSubagents } from "./claude-subagents.ts";
@@ -40,6 +43,8 @@ export type FileTask =
   | { op: "documents"; cwd: string; paths: string[] | null; budgetMs?: number }
   | { op: "agy-catalog"; path: string }
   | { op: "record-tail"; path: string }
+  | { op: "agy-pending"; path: string }
+  | { op: "hermes-pending"; path: string; session: string }
   /**
    * The whole output of the call `ref` names in a Letta transcript (`lettaToolOutputOffThread`), read
    * only from the file `file` names at `path` and cut to `max` characters before it is answered;
@@ -84,7 +89,7 @@ export interface OpenedFile { size: number; range: [number, number] | "unsatisfi
 export const FAST_DISK_MS = 50;
 const PROBE_BYTES = 64 * 1024;
 
-export type FileTaskResult = FileInfo | FileInfo[] | { documents: MarkdownDocument[]; cut: boolean } | string[] | number[] | SlashCommand[] | OmoTask[] | boolean | string | LettaScanCutAnswer | RenderedPage | OpenedFile | { info: FileInfo; within: string } | TextTaskResult | null;
+export type FileTaskResult = FileInfo | FileInfo[] | { documents: MarkdownDocument[]; cut: boolean } | string[] | number[] | SlashCommand[] | OmoTask[] | AgyPendingStep[] | HermesMessage[] | boolean | string | LettaScanCutAnswer | RenderedPage | OpenedFile | { info: FileInfo; within: string } | TextTaskResult | null;
 
 export function runFileTask(task: FileTask): FileTaskResult {
   switch (task.op) {
@@ -96,6 +101,8 @@ export function runFileTask(task: FileTask): FileTaskResult {
     case "documents": return readMarkdownDocuments(task.cwd, task.paths, task.budgetMs);
     case "agy-catalog": return [...agyCatalog(task.path)];
     case "record-tail": return recordTail(task.path);
+    case "agy-pending": return agyPendingSteps(task.path);
+    case "hermes-pending": return hermesPendingMessages(task.path, task.session);
     case "letta-output": return lettaToolOutputIn(task.path, task.ref, task.file, task.max, task.budgetMs ?? LETTA_OUTPUT_READ_MS);
     case "claude-tasks": return wholeClaudeSubagents(task.path, task.live, Date.now(), task.since, Date.now() + CLAUDE_TASKS_READ_MS, Date.now, task.history ?? null);
     case "commands": return paneCommands(task.agent, task.cwd, task.home, task.roots, task.version, task.serverEnv);

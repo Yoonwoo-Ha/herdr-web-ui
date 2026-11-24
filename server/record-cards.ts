@@ -5,6 +5,9 @@ import { lettaMessagesPath } from "./letta-store.ts";
 import { grokHeldTranscript } from "./grok-store.ts";
 import { sessionSnapshot } from "./herdr/client.ts";
 import { FileBusyError, fileTask } from "./file-pool.ts";
+import { AgyUnavailable, agyPendingStepsOffThread } from "./agy.ts";
+import { hermesPendingMessagesOffThread } from "./hermes.ts";
+import { SnapshotUnavailable } from "./sqlite-snapshot.ts";
 import { type AgentRecord, type RecordRequest, commandCut, withRecord } from "./dialogs/record.ts";
 import { parsedByPublicPrompt, publicPrompt } from "./dialogs/shared.ts";
 import { gjcRecord } from "./dialogs/gjc-record.ts";
@@ -12,6 +15,8 @@ import { lettaRecord } from "./dialogs/letta-record.ts";
 import { grokRecord } from "./dialogs/grok-record.ts";
 import { copilotRecord } from "./dialogs/copilot-record.ts";
 import { museRecord } from "./dialogs/muse-record.ts";
+import { agyRecord } from "./dialogs/agy-record.ts";
+import { hermesRecord } from "./dialogs/hermes-record.ts";
 
 /**
  * Where an agent's record of a pane's session says which command waits (`read`), and the dialog that shows it.
@@ -51,6 +56,18 @@ const RECORDS: Readonly<Record<string, RecordSource>> = {
   // the local backend's messages, which Letta appends to as the turn goes; its transcript waits for the turn's end
   letta: sessionFile(lettaRecord, (found) => found.source === "letta-transcript" && found.letta ? lettaMessagesPath(found.letta.store, found.letta.agent, found.letta.conversation) : null),
   grok: { record: grokRecord, read: async (paneId) => { const path = await grokSessionFile(paneId); return path === null ? null : within(path, grokRecord.pending(await tail(path))); } },
+  // the conversation database, read from a private copy on a file thread (agy.ts)
+  agy: { record: agyRecord, read: async (paneId) => {
+    const found = await paneTranscript(paneId);
+    return found.source === "agy-transcript" ? within(found.path, agyRecord.pending(await agyPendingStepsOffThread(found.path))) : null;
+  } },
+  // state.db, read the same way (hermes.ts)
+  // its own dangerous-command panel card takes it (prompt.ts), the generic card too
+  hermes: { record: hermesRecord, read: async (paneId) => {
+    const found = await paneTranscript(paneId);
+    return found.source === "hermes-transcript"
+      ? within(`${found.path}\0${found.sessionId}`, hermesRecord.pending(await hermesPendingMessagesOffThread(found.path, found.sessionId))) : null;
+  } },
 };
 
 export function recordFor(agent: string): Omit<AgentRecord, "pending"> | undefined {
@@ -75,7 +92,8 @@ export async function recordRequest(paneId: string, agent: string): Promise<Reco
   try {
     return await source.read(paneId);
   } catch (error) {
-    if (error instanceof ConversationUnavailable || error instanceof FileBusyError || (error as NodeJS.ErrnoException).code === "ENOENT") return null;
+    if (error instanceof ConversationUnavailable || error instanceof FileBusyError || error instanceof AgyUnavailable || error instanceof SnapshotUnavailable
+      || (error as NodeJS.ErrnoException).code === "ENOENT") return null;
     const kind = `${agent}\0${error instanceof Error ? error.name : typeof error}`;
     if (!unreadable.has(kind)) {
       unreadable.add(kind);
