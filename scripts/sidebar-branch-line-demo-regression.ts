@@ -147,6 +147,35 @@ try {
             assert.deepEqual([hovered.startLeft, hovered.startRight, hovered.afterLeft], [rest.startLeft, rest.startRight, rest.afterLeft], `${what}: the name and branch stay put under the pointer`);
             assert.equal(hovered.menuShown && hovered.menuBeforeState && !hovered.menuOverState && hovered.stateShown, true, `${what}: the ⋯ shows just before the state, which stays in sight`);
             await page.mouse.move(1270, 890);
+            await item.locator(":scope > .workspace-select, :scope > .agent-row").focus();
+            const focused = await measure(item, parts);
+            assert.equal(focused.menuShown && focused.menuBeforeState && !focused.menuOverState && focused.stateShown, true, `${what}: focus-within shows the ⋯ just before the state`);
+            if (what === "w1D") assert.equal(await branchOf("w1D").isVisible(), true, "w1D: focus-within reveals the branch tail");
+            await item.locator(`${parts.menu} button`).click();
+            await page.getByRole("menu").waitFor();
+            const menuOpen = await measure(item, parts);
+            assert.equal(menuOpen.menuShown && menuOpen.menuBeforeState && !menuOpen.menuOverState && menuOpen.stateShown, true, `${what}: an open menu keeps the ⋯ just before the state`);
+            if (what === "w1D") assert.equal(await branchOf("w1D").isVisible(), true, "w1D: an open menu keeps the branch tail in sight");
+            await page.keyboard.press("Escape");
+            await page.getByRole("menu").waitFor({ state: "detached" });
+            await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
+            await page.mouse.move(1270, 890);
+          }
+          if (!phone) {
+            assert.equal(await branchOf("w1D").evaluate((el) => getComputedStyle(el).minWidth), "0px", "short branches are not padded by a 2.5em min-width");
+            await header.hover();
+            await header.locator(".workspace-actions button").click();
+            await page.getByRole("menuitem", { name: "Rename workspace" }).click();
+            const renameInput = header.locator(".workspace-rename-input");
+            await renameInput.waitFor();
+            const actionsHidden = await header.locator(".workspace-actions").evaluate((el) => {
+              const style = getComputedStyle(el);
+              return style.display === "none" || style.visibility === "hidden" || el.getBoundingClientRect().width === 0;
+            });
+            assert.equal(actionsHidden, true, "w1D: renaming hides the ⋯ overlay over the rename field");
+            await renameInput.press("Escape");
+            await renameInput.waitFor({ state: "detached" });
+            await page.mouse.move(1270, 890);
           }
           // herdr's tree: the first worktree's branch runs on (a tee), the last one's stops halfway (an elbow)
           const branch = (id: string) => row(page, id).locator(":scope > .workspace-header").evaluate((header) => {
