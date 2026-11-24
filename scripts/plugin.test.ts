@@ -55,6 +55,23 @@ function portFor(env: Record<string, string | undefined>): string | null {
 }
 
 /**
+ * A server on a port the system hands out (port 0), but never one of REAL_PORTS: the system's range holds two of them
+ * (37317 and 47317), and launchEnv refuses to hand those to a command. A server that lands on one is held while the
+ * next is taken, so the next cannot land there again; then it is let go.
+ */
+function offRealPorts<T extends { port?: number; stop(closeActiveConnections?: boolean): unknown }>(start: () => T): T {
+  const held: T[] = [];
+  let server = start();
+  while (REAL_PORTS.includes(Number(server.port))) {
+    held.push(server);
+    server = start();
+  }
+  for (const extra of held) void extra.stop(true);
+  return server;
+}
+const serveOffRealPorts = ((options: Parameters<typeof Bun.serve>[0]) => offRealPorts(() => Bun.serve(options))) as typeof Bun.serve;
+
+/**
  * The command's environment. PORT is a quiet port unless `extra` names it: with none, the command would ask DEFAULT_PORT
  * (7317), where this PC's own Ovis answers. A test of the port a command finds without PORT passes `PORT: undefined`
  * and keeps a port first (`keep`), which the command then reads. Refused when the port the command would use, after
@@ -96,6 +113,16 @@ afterEach(() => {
 });
 
 describe("the launch helper", () => {
+  it("takes a stand-in's port from the system but never one of REAL_PORTS, holding one that landed there until another is had", () => {
+    const handedOut = [37317, 47317, 40000];
+    const stopped: number[] = [];
+    const server = offRealPorts(() => {
+      const port = handedOut.shift()!;
+      return { port, stop: () => { stopped.push(port); } };
+    });
+    expect({ port: server.port, stopped, left: handedOut }).toEqual({ port: 40000, stopped: [37317, 47317], left: [] });
+  });
+
   it("names a quiet port, and never one this PC's own Ovis may be on", () => {
     const port = Number(launchEnv()["PORT"]);
     expect(Number.isInteger(port) && port > 0).toBe(true);
@@ -503,7 +530,7 @@ describe("starts at the same moment", () => {
     };
     keepPort(portA);
     const holder = await holdLock();
-    const ours = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(APP_HEALTH) });
+    const ours = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(APP_HEALTH) });
     const { server, root } = recordedSleeper((pid) => { const reading = readProcessBirth(pid); return reading.state === "identified" ? reading.birth : null; });
     rmSync(join(scratch, "state", "server.pid"));
     try {
@@ -571,7 +598,7 @@ describe("port", () => {
   });
 
   it("does not start on another port when the PORT the user set cannot be opened, and says so", async () => {
-    const holder = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 404 }) });
+    const holder = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => new Response(null, { status: 404 }) });
     try {
       writeFileSync(join(configDir, ".env"), `PORT=${holder.port}\n`);
       const started = await run("start");
@@ -585,7 +612,7 @@ describe("port", () => {
   });
 
   it("does not take another program's 200 on the port for the app", async () => {
-    const stranger = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<html>not us</html>", { headers: { "content-type": "text/html" } }) });
+    const stranger = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => new Response("<html>not us</html>", { headers: { "content-type": "text/html" } }) });
     try {
       writeFileSync(join(configDir, ".env"), `PORT=${stranger.port}\n`);
       const started = await run("start");
@@ -597,7 +624,7 @@ describe("port", () => {
 
   it("does not take another program's JSON, or the app's shape with a failing status, for the app's bridge health", async () => {
     for (const bridge of [Response.json({ ok: true }), Response.json(BRIDGE_HEALTH, { status: 503 })]) {
-      const stranger = Bun.serve({
+      const stranger = serveOffRealPorts({
         hostname: "127.0.0.1",
         port: 0,
         fetch: (request) => new URL(request.url).searchParams.get("scope") === "bridge"
@@ -615,7 +642,7 @@ describe("port", () => {
   });
 
   it("does not take another program answering ok on both health URLs for the app", async () => {
-    const stranger = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ ok: true }) });
+    const stranger = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json({ ok: true }) });
     try {
       writeFileSync(join(configDir, ".env"), `PORT=${stranger.port}\n`);
       const started = await run("start");
@@ -626,8 +653,8 @@ describe("port", () => {
   });
 
   it("follows a start that is coming up on another port instead of opening a second server", async () => {
-    const ours = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(APP_HEALTH) });
-    const stranger = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: () => { keep(ours.port!); return new Response(null, { status: 404 }); } });
+    const ours = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => Response.json(APP_HEALTH) });
+    const stranger = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: () => { keep(ours.port!); return new Response(null, { status: 404 }); } });
     try {
       keep(stranger.port!);
       mkdirSync(join(scratch, "state"), { recursive: true });
@@ -641,7 +668,7 @@ describe("port", () => {
   });
 
   it("keeps the port of its own server that cannot reach herdr instead of moving the app (#428)", async () => {
-    const ours = Bun.serve({
+    const ours = serveOffRealPorts({
       hostname: "127.0.0.1",
       port: 0,
       fetch: (request) => new URL(request.url).searchParams.get("scope") === "bridge"
@@ -664,7 +691,7 @@ describe("port", () => {
 
   it("reports its own server as running when herdr comes back while start asks why it cannot reach it", async () => {
     let afterBridge = -1;
-    const ours = Bun.serve({
+    const ours = serveOffRealPorts({
       hostname: "127.0.0.1",
       port: 0,
       fetch: (request) => {
@@ -871,7 +898,7 @@ describe("the devices status lists apart", () => {
   /** An Ovis on a port of its own whose health answer is `answer` for each request, by the request's authorization. */
   function answering(answer: (authorization: string | null) => Record<string, unknown>, account?: Record<string, unknown>) {
     const asked: (string | null)[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       if (account !== undefined && new URL(request.url).pathname === "/api/account/status") return Response.json(account);
       if (new URL(request.url).pathname !== "/api/health") return new Response(null, { status: 404 });
       asked.push(request.headers.get("authorization"));
@@ -884,7 +911,7 @@ describe("the devices status lists apart", () => {
 
   it("--json is one object an agent reads: version, running, server id, relay, account and whether it waits for Add, with no token or address in it", async () => {
     const serverId = "0123456789abcdef0123456789abcdef";
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json({ ...APP_HEALTH, account_devices: { unlinked: [], own_word: [] }, relay: { phase: "connecting" } });
       if (path === "/api/account/status") return Response.json({ account: null, members: 0, waiting_for_add: true });
@@ -1006,7 +1033,7 @@ await runPlugin();`], { cwd: ROOT, stdout: "pipe", stderr: "pipe", env: launchEn
 
 describe("add and login", () => {
   function linkedPc() {
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       if (path === "/api/account/status") return Response.json({ account: "acct_1", unlinked: [], removals: [], adds: [], blocked: [] });
@@ -1061,7 +1088,7 @@ describe("add and login", () => {
     let codes = 0;
     let cancelled: (() => void) | null = null;
     const taken = new Promise<void>((resolve) => { cancelled = resolve; });
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       calls.push(`${request.method} ${path}`);
@@ -1208,7 +1235,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
     } });
     chmodSync(socket, 0o600);
     if (more.linked) symlinkSync(socket, own);
-    const tcp = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const tcp = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       if (seen("tcp", request) === "/api/health") return Response.json(more.tcp === undefined ? { ok: true } : more.tcp === true ? APP_HEALTH : more.tcp);
       return Response.json({ error: { code: "unauthorized", message: "Unauthorized" } }, { status: 401 });
     } });
@@ -1320,7 +1347,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
   it("does not take an app on the PORT it was given for the profile when starting, and starts nothing", async () => {
     const pc = profilePc({ door: 1 }, { folderMode: 0o777 });
     const asked: string[] = [];
-    const app = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
+    const app = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch: (request) => {
       asked.push(`${request.method} ${new URL(request.url).pathname}${new URL(request.url).search}`);
       return Response.json(new URL(request.url).searchParams.get("scope") === "bridge" ? BRIDGE_HEALTH : APP_HEALTH);
     } });
@@ -1568,8 +1595,9 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
     const herdrSocket = process.env["HERDR_SOCKET"];
     process.env["HERDR_SOCKET"] = join(scratch, "herdr.sock");
     const account = new FakeAccountService();
-    const server = createServer({ profile: "machine", stateDir: state, port: 0, hostname: "127.0.0.1", tailscaleOwner: null, sidecar: false,
-      relay: new RelayService({ stateDir: state, relay: "wss://relay.invalid" }), accountService: { url: "https://account.test", fetch: account.fetch } });
+    // its port goes into the command's .env, so it is never one the guard refuses
+    const server = offRealPorts(() => createServer({ profile: "machine", stateDir: state, port: 0, hostname: "127.0.0.1", tailscaleOwner: null, sidecar: false,
+      relay: new RelayService({ stateDir: state, relay: "wss://relay.invalid" }), accountService: { url: "https://account.test", fetch: account.fetch } }));
     try {
       const socket = join(realpathSync(state), "serve.sock");
       mkdirSync(join(state, "serve.lock"));
@@ -1599,7 +1627,7 @@ describe.skipIf(platform() === "win32")("a machine profile, under the fleet prev
 describe("pair --approve", () => {
   function waitingPc() {
     const decisions: unknown[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, async fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       if (path === "/api/relay/pairings") return Response.json({ pairings: [{ id: "p1", label: "Phone one", digits: "111222" }, { id: "p2", label: "Phone two", digits: "333444" }] });
@@ -1651,7 +1679,7 @@ describe("pair --approve", () => {
     const decisions: unknown[] = [];
     let asked = (): void => undefined;
     const typedAhead = new Promise<void>((resolve) => { asked = resolve; });
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       if (path === "/api/relay/pairings") { await typedAhead; return Response.json({ pairings: [{ id: "p1", label: "Phone one", digits: "111222" }] }); }
@@ -1682,7 +1710,7 @@ describe("pair --approve", () => {
   /** A PC with a members-only account join waiting (#28): `refusal` answers every relay read, as a locked PC does. */
   function joinWaitingPc(options: { refusal?: "locked" | "strict"; answer?: Response } = {}) {
     const typed: { body: unknown; machine: string | null }[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       if (options.refusal !== undefined && path.startsWith("/api/relay/")) return Response.json({ error: { code: options.refusal, message: "refused" } }, { status: 403 });
@@ -1741,7 +1769,7 @@ describe("pair --approve", () => {
    */
   function firstJoinWaitingPc(answer: (body: { id: string; digits: string }) => Response | undefined = () => undefined) {
     const typed: unknown[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, idleTimeout: 60, async fetch(request) {
       const path = new URL(request.url).pathname;
       if (path === "/api/health") return Response.json(APP_HEALTH);
       if (path === "/api/relay/pairings") return Response.json({ pairings: [] });
@@ -1819,7 +1847,7 @@ describe("pair --approve", () => {
   });
 
   it("says so when no device waits", async () => {
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       return path === "/api/health" ? Response.json(APP_HEALTH) : path === "/api/relay/pairings" ? Response.json({ pairings: [] }) : new Response(null, { status: 404 });
     } });
@@ -1855,7 +1883,7 @@ globalThis.fetch = async (input, init = {}) => {
  */
 function lateAnswerPc(late: string, answer: (path: string) => Response | undefined = () => undefined, reached = (): void => undefined) {
   const limits: Record<string, string | null> = {};
-  const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+  const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
     const path = new URL(request.url).pathname;
     limits[path] = request.headers.get("x-test-limit");
     if (path === "/api/health") return Response.json(APP_HEALTH);
@@ -1911,7 +1939,7 @@ describe("pair relay offer", () => {
     const key = generateKeyPair();
     let offerRequests = 0;
     let validOfferUrl = "";
-    const server = Bun.serve({
+    const server = serveOffRealPorts({
       hostname: "127.0.0.1",
       port: 0,
       async fetch(request) {
@@ -2129,7 +2157,7 @@ describe("a checkout whose packages are not installed", () => {
   it.skipIf(process.platform === "win32")("the commands that need a package fail before they change anything: no pairing code asked for, nothing published or decided", async () => {
     const copy = await withoutPackages();
     const changes: string[] = [];
-    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+    const server = serveOffRealPorts({ hostname: "127.0.0.1", port: 0, fetch(request) {
       const path = new URL(request.url).pathname;
       if (request.method !== "GET") changes.push(`${request.method} ${path}`);
       if (path === "/api/health") return Response.json(APP_HEALTH);
