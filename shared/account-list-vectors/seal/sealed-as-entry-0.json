@@ -1,5 +1,6 @@
 {
   "name": "sealed-as-entry-0",
+  "note": "Bytes sealed for another place, read as entry 0 under epoch 2. Entry 0 is sealed under epoch 0 alone, so this has not the form, whatever the bytes are.",
   "sealed": {
     "list": "",
     "seq": 0,
@@ -10,6 +11,6 @@
     "bytes": "ATb2oaBL9ENVPHpzm4wqCvajPEVaQ94aaI668vvET6mOTU7Rucq-xybkMjh--SPCrmiX7r2UkQILAVJheSZBjrBhOivEe2aZYzzkHHz9YbytM-LVS-gXoU25b1ViDycjcDpqOoppZ5a0JKG207JztIjMCe3D0FXsNJK8qWeAlw1QvUxh-YU"
   },
   "expect": {
-    "why": "refused"
+    "why": "form"
   }
 }

@@ -247,6 +247,18 @@ describe("what a device signs to make an invite", () => {
       expect({ bad, code: malformed(() => inviteMakeBytes({ ...MAKE, ...bad } as InviteMake)) }).toEqual({ bad, code: "redeem_malformed" });
     }
     expect(malformed(() => inviteMakeBytes(null as unknown as InviteMake))).toBe("redeem_malformed");
+  });
+
+  test("a challenge is text in its one encoding: half of a pair alone is refused, since it would be signed as the bytes of another text", () => {
+    // The review's sequence: both of these would give the bytes ef bf bd.
+    const replaced = hex(inviteMakeBytes({ ...MAKE, challenge: "\uFFFD" }));
+    expect(replaced.endsWith("00000003efbfbd")).toBe(true);
+    for (const challenge of ["\uD800", "\uDC00", "a\uD83D", "\uDE00a", "\uDE00\uD83D", `${MAKE.challenge}\uDBFF`]) {
+      expect({ challenge: JSON.stringify(challenge), code: malformed(() => inviteMakeBytes({ ...MAKE, challenge })) }).toEqual({ challenge: JSON.stringify(challenge), code: "redeem_malformed" });
+    }
+    // A whole pair, and any other text, is signed as its UTF-8 bytes.
+    expect(hex(inviteMakeBytes({ ...MAKE, challenge: "\uD83D\uDE00" })).endsWith("00000004f09f9880")).toBe(true);
+    expect(hex(inviteMakeBytes({ ...MAKE, challenge: "\u00e9\u4e2d" })).endsWith("00000005c3a9e4b8ad")).toBe(true);
     expect([isAccountId("a"), isAccountId("a".repeat(64)), isAccountId(""), isAccountId("a".repeat(65)), isAccountId("a.b")]).toEqual([true, true, false, false, false]);
   });
 });

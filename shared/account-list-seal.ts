@@ -70,8 +70,9 @@ export const LIST_STORED_KEY_TEXT_LENGTH = 184;
  * - `missing`: nothing was given (no wrap, no link, no key, no sealed field);
  * - `form`: the bytes, or what they are opened for, have not the form (a length, a version, a point off the curve, a plaintext that is no fields);
  * - `refused`: in form, but it does not open with this key for this place (another member's wrap, another list, seq or epoch, a changed byte);
- * - `other_key`: it opens, to a key that is not the one the list commits to for that epoch. Callers say so besides hiding
- *   the name: a wrap comes from the account service, so a wrong key in one is a sign of tampering;
+ * - `other_key`: it opens, to a key that is not the one the list commits to for that epoch, or a link opens to the very key
+ *   it was opened with (no epoch has the key of the epoch before). Callers say so besides hiding the name: a wrap comes from
+ *   the account service, so a wrong key in one is a sign of tampering;
  * - `bound`: the walk back opened as many links as it may;
  * - `unavailable`: the runtime could not do it (no WebCrypto on a page on plain http); a fault of the place, not of the bytes.
  */
@@ -406,7 +407,14 @@ export function wrapFromText(text: string): Uint8Array | null {
   return bytes.length === LIST_WRAP_BYTES && toBase64Url(bytes) === text ? bytes : null;
 }
 
-/** The link an epoch's opening entry carries: the key of the epoch before, under the opened one. */
+function sameKey(a: Uint8Array, b: Uint8Array): boolean {
+  return a.length === b.length && a.every((byte, index) => byte === b[index]);
+}
+
+/**
+ * The link an epoch's opening entry carries: the key of the epoch before, under the opened one. Refuses `argument`
+ * for two epochs of one key: whoever was put out holds the key before, and would read on under the next number.
+ */
 export async function linkEpochs(given: { readonly list: string; readonly opened: EpochKey; readonly previous: EpochKey }): Promise<Uint8Array> {
   const subtle = webCrypto();
   const { list } = given;
@@ -420,12 +428,17 @@ export async function linkEpochs(given: { readonly list: string; readonly opened
 /** One link, of keys and for a list that were already read and judged. */
 async function linkOf(subtle: SubtleCrypto, list: string, opened: EpochKey, previous: EpochKey): Promise<Uint8Array> {
   if (opened.epoch !== previous.epoch + 1) refuse("argument", "A link goes from an epoch to the one before it");
+  if (sameKey(opened.key, previous.key)) refuse("argument", "An epoch's key is never the key of the epoch before");
   const nonce = randomBytes(NONCE_BYTES);
   const key = await epochCipher(subtle, opened.key, LINK_TAG);
   return concatBytes(Uint8Array.of(LIST_SEAL_VERSION), nonce, await encrypt(subtle, key, nonce, linkData(list, opened.epoch), previous.key));
 }
 
-/** The key of the epoch before `from`, out of the link `from`'s opening entry carries, when it is the one the list commits to. */
+/**
+ * The key of the epoch before `from`, out of the link `from`'s opening entry carries, when it is the one the list
+ * commits to and another key than `from`'s own: the writer makes no link between two epochs of one key
+ * (linkEpochs), and a reader takes none (`other_key`).
+ */
 export async function openLink(given: {
   readonly list: string; readonly from: EpochKey; readonly link: Uint8Array | null | undefined; readonly commitment: string;
 }): Promise<Opened<EpochKey>> {
@@ -439,6 +452,7 @@ export async function openLink(given: {
     const cipher = await epochCipher(subtle, from.key, LINK_TAG);
     const key = await decrypt(subtle, cipher, link.subarray(1, 1 + NONCE_BYTES), linkData(list, from.epoch), link.subarray(1 + NONCE_BYTES));
     if (key === null) return closed("refused");
+    if (sameKey(key, from.key)) return closed("other_key");
     const before: EpochKey = { epoch: from.epoch - 1, key };
     return epochKeyCommitment({ list, epoch: before }) === commitment ? { open: true, value: before } : closed("other_key");
   });
@@ -568,7 +582,11 @@ export async function sealFields(given: {
   return concatBytes(Uint8Array.of(LIST_SEAL_VERSION), nonce, await encrypt(subtle, key, nonce, sealedData(place, epoch.epoch), plaintext));
 }
 
-/** The fields a `sealed` value holds, for the place and the epoch its entry names in clear, without the field that fills it. */
+/**
+ * The fields a `sealed` value holds, for the place and the epoch its entry names in clear, without the field that
+ * fills it. Entry 0 is sealed under epoch 0 and no other, for the reader as for the writer (sealFields): under
+ * another epoch it has not the form, whatever the bytes are.
+ */
 export async function openSealed(given: {
   readonly place: SealedPlace; readonly epoch: EpochKey | null | undefined; readonly sealed: Uint8Array | null | undefined;
 }): Promise<Opened<readonly ListField[]>> {
@@ -578,7 +596,7 @@ export async function openSealed(given: {
     const sealed = bytesOf(handed, SEALED_MIN, LIST_BODY_MAX);
     const place: SealedPlace = { list: given.place.list, seq: given.place.seq };
     const epoch = epochKeyOf(handedKey);
-    if (!isPlace(place) || epoch === null) return closed("form");
+    if (!isPlace(place) || epoch === null || (place.seq === 0 && epoch.epoch !== 0)) return closed("form");
     if (sealed === null || sealed[0] !== LIST_SEAL_VERSION) return closed("form");
     const key = await epochCipher(subtle, epoch.key, SEAL_TAG);
     const plaintext = await decrypt(subtle, key, sealed.subarray(1, 1 + NONCE_BYTES), sealedData(place, epoch.epoch), sealed.subarray(1 + NONCE_BYTES));

@@ -52,6 +52,8 @@ const ACCOUNT_FORM = /^[A-Za-z0-9_-]{1,64}$/;
 const HEX_32 = /^[0-9a-f]{32}$/;
 const HEX_64 = /^[0-9a-f]{64}$/;
 const CHALLENGE_MAX_CHARS = 256;
+/** Half of a surrogate pair with no other half beside it: with the `u` flag a whole pair is read as its one character, which is no surrogate. */
+const HALF_PAIR = /\p{Surrogate}/u;
 const isRecord = (value: unknown): value is Record<string, unknown> => typeof value === "object" && value !== null;
 
 /** An account's id as the account service writes it: 1 to 64 of `A-Z a-z 0-9 _ -`. */
@@ -130,7 +132,8 @@ export async function verifyInviteRedeem(redeem: InviteRedeem, signature: unknow
  * a key proof for adding a PC (shared/account-records.ts, pcAddSigningBytes), with the purpose `invite`, or
  * `invite-auto` for an invite a machine joins with by itself, no `server_id`, and the invite's public key where a
  * listing id stands otherwise. So a proof made for one invite registers no other key. Refuses `redeem_malformed`
- * for a value out of its form, and for an invite key whose point is not on the curve.
+ * for a value out of its form, for an invite key whose point is not on the curve, and for a challenge that holds
+ * half of a surrogate pair alone: two texts would otherwise give the same bytes.
  */
 export function inviteMakeBytes(make: InviteMake): Uint8Array<ArrayBuffer> {
   if (!isRecord(make)) throw new InviteRedeemError("Making an invite names an account, the invite's key and a challenge");
@@ -140,5 +143,7 @@ export function inviteMakeBytes(make: InviteMake): Uint8Array<ArrayBuffer> {
   if (typeof auto !== "boolean") throw new InviteRedeemError("auto is true or false");
   if (typeof challenge_id !== "string" || !HEX_32.test(challenge_id)) throw new InviteRedeemError("challenge_id is 32 of 0-9a-f");
   if (typeof challenge !== "string" || challenge.length < 1 || challenge.length > CHALLENGE_MAX_CHARS) throw new InviteRedeemError("challenge is the text the account service gave");
+  // Half of a pair alone has no UTF-8 bytes of its own: it would be signed as U+FFFD, the bytes of another text.
+  if (HALF_PAIR.test(challenge)) throw new InviteRedeemError("challenge is text in its one encoding: no half of a surrogate pair alone");
   return tagged(INVITE_MAKE_PREFIX, [auto ? "invite-auto" : "invite", account, "", invite_key, challenge_id, challenge]);
 }

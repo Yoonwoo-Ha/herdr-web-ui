@@ -144,6 +144,8 @@ const reference = {
     } catch {
       return { why: "refused" };
     }
+    // An epoch's key is never the key of the epoch before: a link that opens to the key it was opened with gives no key.
+    if (bytesToHex(key) === bytesToHex(from.key)) return { why: "other_key" };
     return reference.commitment(list, from.epoch - 1, key) === commitment ? { key: bytesToHex(key) } : { why: "other_key" };
   },
   sealedData(list: string, seq: number, epoch: number): Uint8Array {
@@ -154,7 +156,7 @@ const reference = {
     return concatBytes(Uint8Array.of(1), nonce, gcm(reference.sub(epoch.key, "ovis-list-seal/1"), nonce, reference.sealedData(list, seq, epoch.epoch)).encrypt(plaintext));
   },
   openSealed(list: string, seq: number, epoch: EpochKey, sealed: Uint8Array): SealVectorResult {
-    if ((seq === 0) !== (list === "") || sealed.length < 47 || sealed.length > 8192 || sealed[0] !== 1) return { why: "form" };
+    if ((seq === 0) !== (list === "") || (seq === 0 && epoch.epoch !== 0) || sealed.length < 47 || sealed.length > 8192 || sealed[0] !== 1) return { why: "form" };
     let plaintext: Uint8Array;
     try {
       plaintext = gcm(reference.sub(epoch.key, "ovis-list-seal/1"), sealed.subarray(1, 13), reference.sealedData(list, seq, epoch.epoch)).decrypt(sealed.subarray(13));
@@ -194,12 +196,14 @@ describe("the vectors of seal/", () => {
   const LINKS = [
     "link", "link-made-elsewhere", "link-to-epoch-0", "link-other-list", "link-other-epoch", "link-other-from-key", "link-byte-changed", "link-nonce-changed",
     "link-version-2", "link-short", "link-trailing-byte", "link-of-another-key", "link-commitment-other-list", "link-from-epoch-0", "link-made-in-python",
+    "link-same-key",
   ];
   const SEALED = [
     "sealed", "sealed-made-elsewhere", "sealed-entry-0", "sealed-no-fields", "sealed-utf8", "sealed-seq-15-digits", "sealed-other-seq", "sealed-other-list",
     "sealed-other-epoch", "sealed-other-epoch-key", "sealed-as-entry-0", "sealed-byte-changed", "sealed-nonce-changed", "sealed-tag-changed",
     "sealed-trailing-byte", "sealed-version-2", "sealed-short", "sealed-entry-0-with-list", "sealed-list-missing", "sealed-names-not-ascending",
     "sealed-plaintext-other-prefix", "sealed-plaintext-cut", "sealed-filled", "sealed-filled-512", "sealed-filled-no-fields", "sealed-pad-other-bytes", "sealed-made-in-python",
+    "sealed-entry-0-epoch-1",
   ];
   const vectors = files.map((file) => JSON.parse(readFileSync(join(dir, file), "utf8")) as SealVector);
 
@@ -487,6 +491,31 @@ describe("the chain of epochs", () => {
     for (const bytes of [link.subarray(0, 60), concatBytes(link, Uint8Array.of(0))]) expect(await openLink({ list: LIST, from: opened, link: bytes, commitment })).toEqual({ open: false, why: "form" });
   });
 
+  test("an epoch's key is never the key of the epoch before: no link is made between two epochs of one key, and none opens to the key it was opened with", async () => {
+    const before = newEpochKey(6);
+    const same: EpochKey = { epoch: 7, key: new Uint8Array(before.key) };
+    const commitment = epochKeyCommitment({ list: LIST, epoch: before });
+    // The writer: whoever was put out holds the key before, so the same key under the next number would let it read on.
+    const refused = await refusal(() => linkEpochs({ list: LIST, opened: same, previous: before }));
+    expect([refused instanceof ListSealError, (refused as ListSealError | null)?.reason]).toEqual([true, "argument"]);
+    expect((await linkEpochs({ list: LIST, opened: newEpochKey(7), previous: before })).length).toBe(LIST_EPOCH_LINK_BYTES);
+    // The reader: such a link, made by somebody else, opens and names the committed key; it is taken for no key all the same.
+    const link = reference.link(LIST, same, before.key);
+    expect(epochKeyCommitment({ list: LIST, epoch: same })).not.toBe(commitment);
+    expect(await openLink({ list: LIST, from: same, link, commitment })).toEqual({ open: false, why: "other_key" });
+    expect(reference.openLink(LIST, same, commitment, link)).toEqual({ why: "other_key" });
+    // A walk stops there with what it reached.
+    const { keys, openings } = await chain(4);
+    const [k1, k3] = [keys[1] as EpochKey, keys[3] as EpochKey];
+    const twin: EpochKey = { epoch: 2, key: new Uint8Array(k1.key) };
+    openings.set(2, { commitment: epochKeyCommitment({ list: LIST, epoch: twin }), link: reference.link(LIST, twin, k1.key) });
+    openings.set(3, { commitment: (openings.get(3) as EpochOpening).commitment, link: reference.link(LIST, k3, twin.key) });
+    expect(await walkBack({ list: LIST, from: k3, openings })).toEqual({ keys: [k3, twin], stopped: { epoch: 1, why: "other_key" } });
+    // nextEpoch never makes one: its key is new.
+    const next = await nextEpoch({ list: LIST, current: before, members: [] });
+    expect(bytesToHex(next.epoch.key)).not.toBe(bytesToHex(before.key));
+  });
+
   test("a link goes one epoch back, and only from an epoch that has one before it", async () => {
     const bad = [
       { list: LIST, opened: newEpochKey(3), previous: newEpochKey(3) },
@@ -602,7 +631,7 @@ describe("a sealed field", () => {
     expect(await openSealed({ place: { list: OTHER_LIST, seq: 7 }, epoch, sealed })).toEqual({ open: false, why: "refused" });
     expect(await openSealed({ place: { list: LIST, seq: 6 }, epoch, sealed })).toEqual({ open: false, why: "refused" });
     expect(await openSealed({ place: { list: LIST, seq: 8 }, epoch, sealed })).toEqual({ open: false, why: "refused" });
-    expect(await openSealed({ place: { list: "", seq: 0 }, epoch, sealed })).toEqual({ open: false, why: "refused" });
+    expect(await openSealed({ place: { list: "", seq: 0 }, epoch: { epoch: 0, key: epoch.key }, sealed })).toEqual({ open: false, why: "refused" });
     expect(await openSealed({ place, epoch: { epoch: 3, key: epoch.key }, sealed })).toEqual({ open: false, why: "refused" });
     expect(await openSealed({ place, epoch: { epoch: 1, key: epoch.key }, sealed })).toEqual({ open: false, why: "refused" });
     expect(await openSealed({ place, epoch: newEpochKey(2), sealed })).toEqual({ open: false, why: "refused" });
@@ -618,6 +647,26 @@ describe("a sealed field", () => {
       expect(await openSealed({ place: bad, epoch: first, sealed })).toEqual({ open: false, why: "form" });
       expect(await refusal(() => seal({ place: bad, epoch: first, fields: NAMES }))).toBeInstanceOf(ListSealError);
     }
+  });
+
+  test("entry 0 opens names from epoch 0 alone: the reader holds the writer's rule", async () => {
+    const place0 = { list: "", seq: 0 };
+    for (const number of [1, 2, 7]) {
+      const key = newEpochKey(number);
+      // What no writer here makes, made by somebody else: its tag holds for this place and this epoch.
+      for (const plaintext of [utf8ToBytes(LIST_SEALED_PREFIX), writeFieldsUnder(LIST_SEALED_PREFIX, NAMES)]) {
+        const sealed = reference.seal("", 0, key, plaintext);
+        expect(await openSealed({ place: place0, epoch: key, sealed })).toEqual({ open: false, why: "form" });
+        expect(reference.openSealed("", 0, key, sealed)).toEqual({ why: "form" });
+      }
+      const written = await refusal(() => seal({ place: place0, epoch: key, fields: NAMES }));
+      expect(written instanceof ListSealError && written.reason).toBe("argument");
+    }
+    // The same bytes under epoch 0 are entry 0's names.
+    const first = newEpochKey(0);
+    const opened = await openSealed({ place: place0, epoch: first, sealed: reference.seal("", 0, first, writeFieldsUnder(LIST_SEALED_PREFIX, NAMES)) });
+    expect(opened.open && shown(opened.value)).toEqual(shown(NAMES));
+    expect(await openSealed({ place: place0, epoch: first, sealed: reference.seal("", 0, first, utf8ToBytes(LIST_SEALED_PREFIX)) })).toEqual({ open: true, value: [] });
   });
 
   test("no single changed bit opens", async () => {

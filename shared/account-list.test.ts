@@ -9,7 +9,7 @@ import {
 import {
   CARD_SIGNATURE_CHARS, EPOCH_LINK_BYTES, INVITE_SECONDS_MAX, INVITE_USES_MAX, LIST_CARD_PREFIX, LIST_LEVEL, LIST_LEVEL_TABLE, LIST_READ_PREFIX, ListKindError, ListWriteError, ReadProofError,
   SEALED_MIN_BYTES, admitsDevice, cardBinding, cardBytes, cardHolds, checkReadProof, firstListState, holdsPc, inviteRefusal, isListKey, isListLabel, joinEntry, kindBody, listView, namesFields, readKind,
-  listClock, pcRemoval, readListState, readNames, readProofRefusal, replayList, rowsNamed, sealEpoch, shownList, signCard, signGenesis, signListEntries, signListEntry, signReadProof, takeEntry,
+  lapsedRemovals, listClock, pcRemoval, readListState, readNames, readProofRefusal, replayList, rowsNamed, sealEpoch, shownList, signCard, signGenesis, signListEntries, signListEntry, signReadProof, takeEntry,
   wrapKeys,
   type EntryPlace, type ListCard, type ListCopy, type ListKind, type ListOutcome, type ListRole, type ListState, type ReadProof, type Sealed,
 } from "./account-list.ts";
@@ -871,6 +871,22 @@ describe("the names an entry carries, and the epochs they are sealed under", () 
     expect([state.full_at, wrapKeys(state, 0)]).toEqual([T0 + 180, [owner.enc, tablet.enc, pool.key, pool2.key]]);
   });
 
+  test("a member that is behind wraps to no invite: it cannot tell whether one was spent since, and a wrap to a key that is out refuses its whole request", async () => {
+    const m2 = await machine(2);
+    // The sequence: an invite for one PC is open when the member falls behind, and a PC joins with it afterwards.
+    const steps: Step[] = [[owner, device(phone)], [owner, invite(pool, 1)], [owner, invite(pool2, 1)], [owner, later()], [pool, join(2)]];
+    const behind = (await play(steps)).state;
+    const reads = (await play(steps, 2)).state;
+    // The member that is behind took nothing in: for it the invite still has its use.
+    expect([behind.behind, inviteRefusal(behind, pool.key), inviteRefusal(reads, pool.key)]).toEqual([4, null, "invite_spent"]);
+    expect(wrapKeys(reads, T0)).toEqual([owner.enc, phone.enc, pool2.key, m2.enc]);
+    expect(wrapKeys(behind, T0)).toEqual([owner.enc, phone.enc]);
+    // Every key it wraps to is one that a member reading everything wraps to, so the removal it sends with them is not refused for a wrap.
+    for (const key of wrapKeys(behind, T0)) expect(wrapKeys(reads, T0)).toContain(key);
+    // What that costs: an invite that is still open gets no key from it either. Before it fell behind it wrapped to both.
+    expect(wrapKeys(at((await play(steps)).states, 3), T0)).toEqual([owner.enc, phone.enc, pool.key, pool2.key]);
+  });
+
   test("the epoch a writer seals under: the current one, and only when it was opened after the last entry that put a key out", async () => {
     const at0 = { epoch: 0, opens: OPENS(0) };
     const sealing = async (steps: readonly Step[], now = T0) => sealEpoch((await play(steps)).state, now);
@@ -911,6 +927,26 @@ describe("the names an entry carries, and the epochs they are sealed under", () 
     // The list's own time counts as a clock: an invite that the list has seen expire is not sealed to, whatever the writer's clock reads.
     const seen2 = await play([[owner, invite(pool, 2, true, T0 + 100)], [owner, device(phone)]]);
     expect([seen2.state.full_at, inviteRefusal(seen2.state, pool.key), sealEpoch(seen2.state, 0)]).toEqual([T0 + 120, "invite_expired", null]);
+  });
+
+  test("an invite that is void went out with whoever placed it: its exp holds nothing back once an epoch was opened after that end", async () => {
+    // The review's sequence: a device places an invite a PC joins with by itself, and is put out; the next epoch is opened, and the invite got no key of it.
+    const voided = await play([[owner, device(phone)], [phone, invite(pool, 2, true, T0 + 900)], [owner, remove(phone)], [owner, opening(0)]]);
+    const at1 = { epoch: 1, opens: OPENS(1) };
+    expect([inviteRefusal(voided.state, pool.key), wrapKeys(voided.state, T0)]).toEqual(["invite_void", [owner.enc]]);
+    expect([sealEpoch(voided.state, T0 + 900), sealEpoch(voided.state, T0 + 901), sealEpoch(voided.state, T0 + 99999)]).toEqual([at1, at1, at1]);
+    expect(lapsedRemovals(voided.state, T0 + 901)).toEqual([]);
+    // Before that epoch nothing is sealed, at any time: the end of whoever placed it put the invite's key out.
+    expect([sealEpoch(at(voided.states, 3), T0), sealEpoch(at(voided.states, 3), T0 + 901)]).toEqual([null, null]);
+    // The same where whoever placed it is a signer with no name, which is neither a device nor a PC.
+    const nameless = await play([[owner, plus(await device(phone), { role: "admin" })], [phone, invite(pool, 2, true, T0 + 900)], [owner, remove(phone)], [owner, opening(0)]]);
+    expect([nameless.said, inviteRefusal(nameless.state, pool.key)]).toEqual([["no_effect entry_invalid", "counts", "counts", "counts"], "invite_void"]);
+    expect([sealEpoch(at(nameless.states, 2), T0), sealEpoch(at(nameless.states, 3), T0), sealEpoch(nameless.state, T0 + 901)]).toEqual([{ epoch: 0, opens: OPENS(0) }, null, at1]);
+    // A spent invite and a revoked one are not asked for their exp either; one that is only past its exp still is.
+    const spent = await play([[owner, invite(pool, 1, true, T0 + 900)], [pool, join(1)], [owner, opening(0)]]);
+    const revoked = await play([[owner, invite(pool, 1, true, T0 + 900)], [owner, remove(pool)], [owner, opening(0)]]);
+    const open = await play([[owner, invite(pool, 1, true, T0 + 900)], [owner, device(phone)], [owner, remove(phone)], [owner, opening(0)]]);
+    expect([sealEpoch(spent.state, T0 + 901), sealEpoch(revoked.state, T0 + 901), sealEpoch(open.state, T0 + 900), sealEpoch(open.state, T0 + 901)]).toEqual([at1, at1, at1, null]);
   });
 
   test("a member that is stopped for a replay seals nothing", async () => {
@@ -1033,6 +1069,10 @@ describe("how a member writes: an entry is signed only when it counts on the wri
     await signListEntry(state, kind, signer(by), T0 + 600).then(() => "signed", (error: unknown) => (error instanceof ListWriteError ? (error.outcome === null ? "not written" : said(error.outcome)) : String(error)));
   const deviceKind = async (key: Key, more: Partial<Extract<ListKind, { kind: "device" }>> = {}): Promise<ListKind> =>
     ({ kind: "device", key: key.key, power: "full", role: "drive", until: null, enc: key.enc, card: await card(key), sealed: SEAL, rotates: false, ...more });
+  /** Why a writer is refused, in a word: the helper's own reason, or what would have become of the entry. */
+  const whyNot = (error: unknown): string => (error instanceof ListWriteError ? error.reason ?? (error.outcome === null ? "not written" : said(error.outcome)) : String(error));
+  const written = async (state: ListState, kind: ListKind, by: Key = owner, issued = T0 + 600) => await signListEntry(state, kind, signer(by), issued).then(() => "signed", whyNot);
+  const epochKind = (state: ListState): ListKind => ({ kind: "epoch", epoch: state.epoch, opens: OPENS(state.epoch + 1), link: LINK(state.epoch + 1) });
 
   test("entry 0 is signed by its first device, and the list starts as every member reads it", async () => {
     const written = await signGenesis({ kind: "genesis", account: "TEST-ONLY-account", enc: owner.enc, opens: OPENS(0), sealed: SEAL }, signer(owner), T0);
@@ -1074,23 +1114,125 @@ describe("how a member writes: an entry is signed only when it counts on the wri
     expect(await refusal(state, { kind: "remove", ends: tablet.key }, tablet)).toBe("signed");
   });
 
-  test("nobody opens an epoch at will: an epoch is written only where names can no longer be sealed under the current one", async () => {
-    const next1: ListKind = { kind: "epoch", epoch: 0, opens: OPENS(1), link: LINK(1) };
-    const why = async (state: ListState, at = T0 + 600) => await signListEntry(state, { ...next1, epoch: state.epoch, opens: OPENS(state.epoch + 1), link: LINK(state.epoch + 1) }, signer(owner), at)
-      .then(() => "signed", (error: unknown) => (error instanceof ListWriteError ? error.reason ?? (error.outcome === null ? "not written" : said(error.outcome)) : String(error)));
+  test("nobody opens an epoch at will: an epoch is written only after an entry that put a key out, or took an invite's last use, since the current one opened", async () => {
+    const why = async (state: ListState, at = T0 + 600) => await written(state, epochKind(state), owner, at);
     // Nobody is out: no epoch, also right after an add, and after an add that lost its place and is signed again.
     expect(await why((await play([])).state)).toBe("epoch_not_needed");
     expect(await why((await play([[owner, device(phone)], [owner, pc(desk, 1)], [owner, invite(pool, 2)], [pool, join(2)]])).state)).toBe("epoch_not_needed");
-    // After a removal, the join that took an invite's last use, or a time that is over: the next epoch is called for.
+    // After a removal, or the join that took an invite's last use: the next epoch is called for.
     expect(await why((await play([[owner, device(phone)], [owner, remove(phone)]])).state)).toBe("signed");
     expect(await why((await play([[owner, invite(pool, 1)], [pool, join(2)]])).state)).toBe("signed");
-    const timed = (await play([[owner, device(tablet, "bound", "drive", { until: String(T0 + 3600) })]])).state;
-    expect([await why(timed, T0 + 3599), await why(timed, T0 + 3600)]).toEqual(["epoch_not_needed", "signed"]);
     // Once it is open, no second one: of two members that open it at once, one does, and the other finds nothing left to do.
     const opened = (await play([[owner, device(phone)], [owner, remove(phone)], [owner, opening(0)]])).state;
     expect(await why(opened)).toBe("epoch_not_needed");
     // Members count an epoch that somebody placed all the same: this is what a writer does, not what an entry is.
     expect((await play([[owner, opening(0)]])).said).toEqual(["counts"]);
+  });
+
+  test("a time that is over calls for no epoch by itself: whoever is past its until or its exp is put out first, and the epoch follows that remove", async () => {
+    const timed = (await play([[owner, device(tablet, "bound", "drive", { until: String(T0 + 3600) })], [owner, invite(pool, 2, true, T0 + 7200)], [owner, invite(plain, 2, false, T0 + 900)]])).state;
+    const why = async (state: ListState, at: number) => await written(state, epochKind(state), owner, at);
+    // Before its until nothing calls for an epoch. At it nothing is sealed any more, and still no epoch is signed: the device is in.
+    expect([sealEpoch(timed, T0 + 3599), await why(timed, T0 + 3599), lapsedRemovals(timed, T0 + 3599)]).toEqual([{ epoch: 0, opens: OPENS(0) }, "epoch_not_needed", []]);
+    expect([sealEpoch(timed, T0 + 3600), await why(timed, T0 + 3600)]).toEqual([null, "epoch_no_use"]);
+    // The review's sequence: with the device still in, an epoch signed at its until would be followed by another, and another.
+    const again = await signListEntries(timed, [epochKind, epochKind], signer(owner), T0 + 3600).then(() => "signed", whyNot);
+    expect(again).toBe("epoch_no_use");
+    // What the clock calls for is the remove of whoever is over its time: the device at its until, an invite a PC joins with by itself past its exp.
+    expect(lapsedRemovals(timed, T0 + 3600)).toEqual([{ kind: "remove", ends: tablet.key }]);
+    expect(lapsedRemovals(timed, T0 + 7200)).toEqual([{ kind: "remove", ends: tablet.key }]);
+    expect(lapsedRemovals(timed, T0 + 7201)).toEqual([{ kind: "remove", ends: tablet.key }, { kind: "remove", ends: pool.key }]);
+    // One batch: those removes, then one epoch, and names are sealed again; no second epoch after it.
+    const batch = await signListEntries(timed, [...lapsedRemovals(timed, T0 + 7201), epochKind], signer(owner), T0 + 7201);
+    expect(batch.entries.map((item) => readBody(item.entry.body).kind)).toEqual(["remove", "remove", "epoch"]);
+    expect([sealEpoch(batch.state, T0 + 7201), lapsedRemovals(batch.state, T0 + 7201), await why(batch.state, T0 + 7201)]).toEqual([{ epoch: 1, opens: OPENS(1) }, [], "epoch_not_needed"]);
+    // With one of the two still in, the epoch after the other's remove is signed (a remove calls for it), and nothing is sealed until the second is out too.
+    const half = await signListEntries(timed, [{ kind: "remove", ends: tablet.key }, epochKind], signer(owner), T0 + 7201);
+    expect([half.state.epoch, sealEpoch(half.state, T0 + 7201), await why(half.state, T0 + 7201), lapsedRemovals(half.state, T0 + 7201)]).toEqual([1, null, "epoch_no_use", [{ kind: "remove", ends: pool.key }]]);
+    // The list's own time is a clock too, and a member that is stopped for a replay is told of nobody.
+    const seen2 = (await play([[owner, invite(pool, 2, true, T0 + 100)], [owner, device(phone)]])).state;
+    expect([inviteRefusal(seen2, pool.key), lapsedRemovals(seen2, 0), await why(seen2, 0)]).toEqual(["invite_expired", [{ kind: "remove", ends: pool.key }], "epoch_no_use"]);
+    const { links, state } = await play([[owner, device(tablet, "bound", "drive", { until: String(T0 + 3600) })], [owner, later()]]);
+    const stopped = (await takeEntry(state, (await next(at(links, 2), stranger, later())).held)).state;
+    expect([lapsedRemovals(state, T0 + 3600), lapsedRemovals(stopped, T0 + 3600)]).toEqual([[{ kind: "remove", ends: tablet.key }], []]);
+  });
+
+  test("the returned footing hashes the entry that was signed, whatever the caller does to its bytes meanwhile", async () => {
+    const { state } = await play([]);
+    const bytes = new Uint8Array(SEALED_MIN_BYTES);
+    const pending = signListEntry(state, { kind: "invite", key: pool.key, exp: EXP, uses: 1, auto: false, sealed: { epoch: 0, bytes } }, signer(owner), T0 + 60);
+    bytes[0] = 1;
+    const entry = await pending;
+    expect(entry.state.footing.hash).toBe(entryHash(entry.entry.body));
+    expect((await replayList([(await first()).text, entry.text], 1, { saved: null })).member?.state).toEqual(entry.state);
+    // Entry 0 and a PC's own join the same.
+    const names = new Uint8Array(SEALED_MIN_BYTES);
+    const pendingFirst = signGenesis({ kind: "genesis", account: "TEST-ONLY-account", enc: owner.enc, opens: OPENS(0), sealed: { epoch: 0, bytes: names } }, signer(owner), T0);
+    names[0] = 1;
+    const genesisWritten = await pendingFirst;
+    expect([genesisWritten.state.list, genesisWritten.state.footing.hash]).toEqual([entryHash(genesisWritten.entry.body), entryHash(genesisWritten.entry.body)]);
+    const invited = (await play([[owner, invite(pool, 2)]])).state;
+    const m1 = await machine(1);
+    const own = new Uint8Array(SEALED_MIN_BYTES);
+    const pendingJoin = joinEntry(await lineOf(pool), { key: m1.key, privateKey: m1.pair.privateKey, enc: m1.enc, endpoint: E(1) }, invited, T0 + 120, { epoch: 0, bytes: own });
+    own[0] = 1;
+    const joined = await pendingJoin;
+    expect(joined.state.footing.hash).toBe(entryHash(joined.entry.body));
+    // A line that signs another body than the one that was judged gives no entry.
+    const line = await lineOf(pool);
+    const shifty = { key: line.key, list: line.list, signJoin: async (body: EntryBody) => await line.signJoin({ ...body, issued_at: body.issued_at + 1 }) };
+    expect(await joinEntry(shifty, { key: m1.key, privateKey: m1.pair.privateKey, enc: m1.enc, endpoint: E(1) }, invited, T0 + 120, null).then(() => "signed", whyNot)).toBe("not written");
+  });
+
+  test("a member that is behind signs nobody in: it writes a removal and the epoch after it, and nothing else (`behind`)", async () => {
+    // The review's sequence: a PC joined after the member fell behind, so the member does not know its key, and would give it to a carried PC.
+    const m2 = await machine(2);
+    const steps: Step[] = [[owner, carriedPc(1)], [owner, carried(late)], [owner, device(phone)], [owner, invite(pool, 3)], [owner, later()], [pool, join(2)]];
+    const played = await play(steps);
+    const behind = played.state;
+    const reads = (await play(steps, 2)).state;
+    const reused: ListKind = { kind: "pc", key: m2.key, endpoint: E(1), enc: m2.enc, card: await card(m2, E(1)), sealed: SEAL };
+    expect([behind.behind, reads.behind]).toEqual([5, null]);
+    // On its own state that pc would count, which is why it is refused before the state is asked.
+    const held = await next(at(played.links, 6), owner, await pc(m2, 1));
+    expect(said((await takeEntry(behind, held.held)).outcome)).toBe("counts");
+    expect([await written(reads, reused), await written(behind, reused)]).toEqual(["no_effect key_reused", "behind"]);
+    // Nobody is written in while behind, by any kind: a device, a PC, an invite, a carried, a device's own card.
+    const kinds: ListKind[] = [
+      await deviceKind(tablet),
+      { kind: "pc", key: desk.key, endpoint: E(1), enc: desk.enc, card: await card(desk, E(1)), sealed: SEAL },
+      { kind: "pc", key: desk.key, endpoint: E(7), enc: desk.enc, card: await card(desk, E(7)), sealed: SEAL },
+      { kind: "invite", key: pool2.key, exp: EXP, uses: 1, auto: true, sealed: SEAL },
+      { kind: "carried", key: tablet.key, role: "drive", sealed: SEAL },
+      { kind: "carried", endpoint: E(8), sealed: SEAL },
+    ];
+    for (const kind of kinds) expect({ kind: kind.kind, why: await written(behind, kind) }).toEqual({ kind: kind.kind, why: "behind" });
+    expect(await written(behind, { kind: "card", enc: late.enc }, late)).toBe("behind");
+    // Nothing is out yet, so no epoch either; that is the same answer as for everybody.
+    expect(await written(behind, epochKind(behind))).toBe("epoch_not_needed");
+    // A removal is signed, and the epoch it calls for after it: by a key, by a relay key, in one batch.
+    expect(await written(behind, { kind: "remove", ends: phone.key })).toBe("signed");
+    expect(await written(behind, { kind: "remove", endpoint: E(1) })).toBe("signed");
+    const batch = await signListEntries(behind, [{ kind: "remove", ends: phone.key }, epochKind], signer(owner), T0 + 600);
+    expect([batch.entries.map((item) => readBody(item.entry.body).kind), batch.state.epoch, batch.state.behind]).toEqual([["remove", "epoch"], 1, 5]);
+    // One step that lets somebody in refuses the whole batch.
+    expect(await signListEntries(behind, [{ kind: "remove", ends: phone.key }, await deviceKind(tablet)], signer(owner), T0 + 600).then(() => "signed", whyNot)).toBe("behind");
+    // A PC that reads the list behind does not join it by itself.
+    const m3 = await machine(3);
+    const joining = { key: m3.key, privateKey: m3.pair.privateKey, enc: m3.enc, endpoint: E(3) };
+    expect(await joinEntry(await lineOf(pool), joining, behind, T0 + 600, null).then(() => "signed", whyNot)).toBe("behind");
+    expect(await joinEntry(await lineOf(pool), joining, reads, T0 + 600, null).then(() => "signed", whyNot)).toBe("signed");
+    // What is judged is what is written: an object that says `remove` for a while and `pc` afterwards gets no pc signed, whenever it turns.
+    const turned: string[] = [];
+    for (const turnsAfter of [0, 1, 2, 3]) {
+      let asked = 0;
+      const shifty = { ...reused, get kind() { asked++; return asked <= turnsAfter ? "remove" : "pc"; } } as unknown as ListKind;
+      turned.push(await signListEntry(behind, shifty, signer(owner), T0 + 600).then((entry) => `signed a ${readBody(entry.entry.body).kind}`, (error: unknown) => (error instanceof ListKindError ? error.code : whyNot(error))));
+    }
+    expect(turned).toEqual(["behind", "entry_invalid", "signed a remove", "signed a remove"]);
+    // A member that is stopped for a replay is told that first: it writes nothing at all.
+    const stopped = (await takeEntry(behind, (await next(at(played.links, 6), stranger, later())).held)).state;
+    expect([stopped.needs_replay === undefined, await written(stopped, { kind: "remove", ends: phone.key })]).toEqual([false, "not written"]);
   });
 
   test("a writer that is stopped for a replay writes nothing, and a private key that is not the signer's signs nothing that leaves", async () => {
@@ -1121,25 +1263,31 @@ describe("how a member writes: an entry is signed only when it counts on the wri
     await expect(signListEntries(state, [{ kind: "remove", endpoint: E(1) }, { kind: "remove", endpoint: E(1) }], signer(owner), T0 + 600)).rejects.toThrow(ListWriteError);
   });
 
-  test("over generated histories of honest writers, a member that is behind holds exactly the PCs it held that a member reading everything still holds", async () => {
+  test("over generated histories of honest writers, of whom one is behind, a member that is behind holds exactly the PCs it held that a member reading everything still holds", async () => {
     let promoted = 0;
     let removals = 0;
-    for (let seed = 61; seed <= 76; seed++) {
+    let byBehind = 0;
+    let refusedBehind = 0;
+    let spentUnseen = 0;
+    for (let seed = 61; seed <= 84; seed++) {
       const random = seeded(seed);
       const pick = <Item>(items: readonly Item[]): Item => at(items, Math.floor(random() * items.length));
       const all = [owner, phone, tablet, desk, tower, pool, pool2, plain, late, stranger, other];
-      // A member that reads everything (level 2) writes; a member of level 1 takes the same entries.
+      // A member that reads everything (level 2) and a member of level 1 take the same entries, and both write.
       const genesis2 = await signGenesis({ kind: "genesis", account: "TEST-ONLY-account", enc: owner.enc, opens: OPENS(0), sealed: SEAL }, signer(owner), T0, 2);
       const held = (entry: { readonly body: Uint8Array; readonly signature: Uint8Array }): HeldEntry => ({ entry, body: readBody(entry.body), hash: entryHash(entry.body), list: genesis2.state.list });
       let full = genesis2.state;
       let behind = firstListState(held(genesis2.entry), 1);
-      const place = async (written: { readonly entry: { readonly body: Uint8Array; readonly signature: Uint8Array }; readonly state: ListState }) => {
-        full = written.state;
-        behind = (await takeEntry(behind, held(written.entry))).state;
+      const place = async (entry: { readonly body: Uint8Array; readonly signature: Uint8Array }) => {
+        const outcome = (await takeEntry(full, held(entry)));
+        full = outcome.state;
+        behind = (await takeEntry(behind, held(entry))).state;
+        return said(outcome.outcome);
       };
-      // Whoever was in the account before: three PCs and a device, carried in.
-      for (const kind of [{ kind: "carried", endpoint: E(1), sealed: SEAL }, { kind: "carried", endpoint: E(2), sealed: SEAL }, { kind: "carried", endpoint: E(3), sealed: SEAL }, { kind: "carried", key: phone.key, role: "drive", sealed: SEAL }] as ListKind[]) {
-        await place(await signListEntry(full, kind, signer(owner), T0 + 30));
+      // Whoever was in the account before: three PCs and a device, carried in. Then an invite for one PC, open when the member falls behind.
+      for (const kind of [{ kind: "carried", endpoint: E(1), sealed: SEAL }, { kind: "carried", endpoint: E(2), sealed: SEAL }, { kind: "carried", endpoint: E(3), sealed: SEAL }, { kind: "carried", key: phone.key, role: "drive", sealed: SEAL },
+        { kind: "invite", key: pool.key, exp: EXP, uses: 1, auto: true, sealed: SEAL }] as ListKind[]) {
+        await place((await signListEntry(full, kind, signer(owner), T0 + 30)).entry);
       }
       const fallsBehindAt = Math.floor(random() * 6);
       for (let step = 0; step < 70; step++) {
@@ -1150,15 +1298,15 @@ describe("how a member writes: an entry is signed only when it counts on the wri
           // One entry of a later level, by a signer of power full: the member of level 1 is behind from here.
           const by = signers.find((key) => signerPower(full, key.key) === "full");
           if (by === undefined) break;
-          const entry = await signEntry({ ...bodyOf(later(), by, { seq: full.footing.seq + 1, list: full.list, prev: full.footing.hash }), issued_at: issued }, by.pair.privateKey);
-          full = (await takeEntry(full, held(entry))).state;
-          behind = (await takeEntry(behind, held(entry))).state;
+          await place(await signEntry({ ...bodyOf(later(), by, { seq: full.footing.seq + 1, list: full.list, prev: full.footing.hash }), issued_at: issued }, by.pair.privateKey));
           continue;
         }
         const by = pick(signers);
         const about = pick(all);
         const n = 1 + Math.floor(random() * 6);
-        const names: Sealed | null = sealEpoch(full, issued) === null ? null : { epoch: full.epoch, bytes: SEALED };
+        // Who writes this entry: the member that reads everything, or the one of level 1, each on its own state.
+        const writer = random() < 0.4 ? behind : full;
+        const names: Sealed | null = sealEpoch(writer, issued) === null ? null : { epoch: writer.epoch, bytes: SEALED };
         const power: SignerPower = random() < 0.3 ? "bound" : "full";
         const kinds: (() => Promise<ListKind> | ListKind)[] = [
           async () => ({ kind: "device", key: about.key, power, role: "drive", until: null, enc: about.enc, card: await card(about, null, { list: full.list }), sealed: names, rotates: false }),
@@ -1169,18 +1317,30 @@ describe("how a member writes: an entry is signed only when it counts on the wri
           () => ({ kind: "remove", ends: about.key }),
           () => ({ kind: "remove", endpoint: E(n) }),
           () => ({ kind: "remove", endpoint: E(n) }),
-          () => ({ kind: "epoch", epoch: full.epoch, opens: OPENS(full.epoch + 1), link: LINK(full.epoch + 1) }),
+          () => ({ kind: "epoch", epoch: writer.epoch, opens: OPENS(writer.epoch + 1), link: LINK(writer.epoch + 1) }),
         ];
         const kind = await pick(kinds)();
-        const written = await signListEntry(full, kind, signer(by), issued).catch((error: unknown) => {
+        const written = await signListEntry(writer, kind, signer(by), issued).catch((error: unknown) => {
+          if (error instanceof ListWriteError && error.reason === "behind") refusedBehind++;
           if (error instanceof ListWriteError || error instanceof ListKindError) return null;
           throw error;
         });
         if (written === null) continue;
         const before = behind;
-        await place(written);
-        const where = `seed ${seed} step ${step} ${by.name} ${kind.kind}`;
+        const where = `seed ${seed} step ${step} ${by.name} ${kind.kind}${writer === behind ? " by the member of level 1" : ""}`;
+        const wasBehind = writer === behind && behind.behind !== null;
+        // What a member signs counts for the member that reads everything, whichever of the two wrote it.
+        expect({ where, told: await place(written.entry) }).toEqual({ where, told: "counts" });
+        expect({ where, same: JSON.stringify(writer === before ? behind : full) === JSON.stringify(written.state) }).toEqual({ where, same: true });
+        if (wasBehind) {
+          byBehind++;
+          // While it is behind a member writes a removal and the epoch after one, and nothing else.
+          expect({ where, kind: kind.kind === "remove" || kind.kind === "epoch" }).toEqual({ where, kind: true });
+        }
         if (kind.kind === "remove") removals++;
+        // Every key the member that is behind wraps an epoch's key to is one the member that reads everything wraps to.
+        for (const key of wrapKeys(behind, issued)) expect({ where, key: key.slice(-8), wrapped: wrapKeys(full, issued).includes(key) }).toEqual({ where, key: key.slice(-8), wrapped: true });
+        if (Object.keys(behind.invites).some((key) => inviteRefusal(behind, key) === null && inviteRefusal(full, key) === "invite_spent")) spentUnseen++;
         if (behind.behind !== null && kind.kind === "pc" && before.pcs[kind.endpoint] !== undefined && behind.pcs[kind.endpoint]?.how === "added") promoted++;
         // Every PC the member that is behind has a row for is in for it exactly when it is in for the member that reads everything; it never holds one that the other put out.
         for (const endpoint of Object.keys(behind.pcs)) expect({ where, endpoint: pcName(endpoint), held: holdsPc(behind, endpoint) }).toEqual({ where, endpoint: pcName(endpoint), held: holdsPc(full, endpoint) });
@@ -1189,8 +1349,8 @@ describe("how a member writes: an entry is signed only when it counts on the wri
         if (behind.behind !== null) for (const [endpoint, row] of Object.entries(full.pcs)) if (before.pcs[endpoint] === undefined && behind.pcs[endpoint] === undefined) expect({ where, endpoint: pcName(endpoint), since: row.seq >= behind.behind }).toEqual({ where, endpoint: pcName(endpoint), since: true });
       }
     }
-    // The histories gave carried PCs their keys while the member was behind, and put PCs out, often enough to mean something.
-    expect([promoted > 5, removals > 30]).toEqual([true, true]);
+    // The histories gave carried PCs their keys while the member was behind, put PCs out, had the member that is behind write and be refused, and spent an invite it still took for open, often enough to mean something.
+    expect([promoted > 5, removals > 30, byBehind > 20, refusedBehind > 50, spentUnseen > 3]).toEqual([true, true, true, true, true]);
   }, 120_000);
 
   test("over generated histories of honest writers, no key is ever a signer with no name", async () => {
@@ -1755,6 +1915,21 @@ describe("a saved state: plain data that can be stored and loaded", () => {
     expect(readListState(value, 1)).toBeNull();
   });
 
+  test("carrying cannot already be closed at footing zero: no entry has closed it", async () => {
+    const { state } = await play([]);
+    expect(readListState(JSON.parse(JSON.stringify(state)), 1)).toEqual(state);
+    expect(readListState({ ...(JSON.parse(JSON.stringify(state)) as Record<string, unknown>), carrying: false }, 1)).toBeNull();
+    // Such a state would refuse the first carried, which a replay of the same two entries counts.
+    const closed = { ...state, carrying: false };
+    const one = await next(await first(), owner, carried(phone));
+    expect([said((await takeEntry(closed, one.held)).outcome), said((await takeEntry(state, one.held)).outcome)]).toEqual(["no_effect carried_late", "counts"]);
+    // A loose entry is no footing and closes nothing; the first entry of a signer that is no carried closes it, and that state reads.
+    const loose = await play([[stranger, device(late)]]);
+    expect([loose.state.footing.seq, loose.state.carrying, readListState(JSON.parse(JSON.stringify(loose.state)), 1)]).toEqual([0, true, loose.state]);
+    const used = await play([[owner, device(phone)]]);
+    expect([used.state.footing.seq, used.state.carrying, readListState(JSON.parse(JSON.stringify(used.state)), 1)]).toEqual([1, false, used.state]);
+  });
+
   test("behind: while it is behind it lets nobody new in, so no named row stands at or past that place", async () => {
     const { state } = await play([[owner, device(phone)], [owner, later()], [owner, device(late)]]);
     expect([state.behind, seen(state).signers.late]).toEqual([2, "full no name @3 by owner"]);
@@ -1998,6 +2173,41 @@ describe("a PC joins with the line it was given", () => {
       await expect(line.signRead(bytes)).rejects.toThrow(JoinLineSignError);
     }
     await expect((await lineOf(pool, null)).signRead(proof({ ...own, list: "" }))).rejects.toThrow(JoinLineSignError);
+  });
+
+  test("the line signs only a proof for reading that its own checker reads: the four fields, each in its form", async () => {
+    const line = await lineOf(pool);
+    const proof = (values: Record<string, string>) => writeFieldsUnder(LIST_READ_PREFIX, Object.entries(values).sort(([a], [b]) => (a < b ? -1 : 1)).map(([name, value]) => ({ name, value: utf8ToBytes(value) })));
+    const own = { after: "", at: String(T0), key: pool.key, list: LIST };
+    const { after: _after, ...noAfter } = own;
+    const { at: _at, ...noAt } = own;
+    const refused: Record<string, string>[] = [
+      // The review's sequence: the line's own key and list, and nothing else.
+      { key: pool.key, list: LIST },
+      noAfter, noAt, { ...own, note: "x" },
+      { ...own, at: "" }, { ...own, at: "01" }, { ...own, at: "x" }, { ...own, at: "-1" }, { ...own, at: "1".repeat(16) },
+      { ...own, after: "x" }, { ...own, after: "01" }, { ...own, after: "-1" },
+      // A value is its bytes: a byte order mark before it is no part of a number, a key or a list id, for the line as for the checker.
+      { ...own, at: `\uFEFF${T0}` }, { ...own, after: "\uFEFF" }, { ...own, after: "\uFEFF7" }, { ...own, key: `\uFEFF${pool.key}` }, { ...own, list: `\uFEFF${LIST}` },
+    ];
+    for (const values of refused) {
+      const bytes = proof(values);
+      const signed = await line.signRead(bytes).then((signature) => entryToText({ body: bytes, signature }), (error: unknown) => error);
+      expect({ values, refused: signed instanceof JoinLineSignError }).toEqual({ values, refused: true });
+      expect({ values, code: (signed as JoinLineSignError).code }).toEqual({ values, code: "not_signed" });
+      // And the checker reads none of them, whoever signs.
+      const forged = entryToText({ body: bytes, signature: new Uint8Array(await crypto.subtle.sign(SIGN, pool.pair.privateKey, bytes as Uint8Array<ArrayBuffer>)) });
+      expect({ values, code: await checkReadProof(forged).then(() => null, (error: unknown) => (error instanceof ReadProofError ? error.code : String(error))) }).toEqual({ values, code: "proof_malformed" });
+    }
+    // Bytes that are no text at all are no value either.
+    const raw = writeFieldsUnder(LIST_READ_PREFIX, [{ name: "after", value: Uint8Array.of(0xff) }, { name: "at", value: utf8ToBytes(String(T0)) }, { name: "key", value: utf8ToBytes(pool.key) }, { name: "list", value: utf8ToBytes(LIST) }]);
+    await expect(line.signRead(raw)).rejects.toThrow(JoinLineSignError);
+    // Whatever the line signs, its checker reads.
+    for (const values of [own, { ...own, after: "0" }, { ...own, after: "7" }, { ...own, at: "0" }, { ...own, at: "9".repeat(15) }]) {
+      const bytes = proof(values);
+      const text = entryToText({ body: bytes, signature: await line.signRead(bytes) });
+      expect((await checkReadProof(text)).key).toBe(pool.key);
+    }
   });
 });
 

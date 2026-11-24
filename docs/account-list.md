@@ -211,11 +211,13 @@ What the kinds add to the signers' rule:
   that signs itself out leaves that to one that stays.
 - **A writer seals nothing under an epoch that somebody who is out can read.** It seals under the
   current epoch only when the entry that opened it stands after the last entry that put out a
-  device, a PC, or an invite with `auto` `1`, and after the `join` that took such an invite's last
-  use (the holder of that line held the key too); and only while no device that is in is past its
-  `until` and no such invite that still has a use is past its `exp`, by the writer's clock. One of
-  those is first put out and the next epoch opened. Otherwise the writer writes its entry with no
-  names. This is the writer's rule (`sealEpoch`), which no writer works out for itself; an entry
+  device, a PC, or an invite with `auto` `1` (revoked, or void with whoever placed it), and after
+  the `join` that took such an invite's last use (the holder of that line held the key too); and
+  only while no device that is in is past its `until` and no such invite that is in and still has
+  a use is past its `exp`, by the writer's clock. One of those is first put out and the next epoch
+  opened after its `remove`. An invite that is out already is not asked for its `exp`: it went out
+  with its own end or its placer's, and got no key after that. Otherwise the writer writes its
+  entry with no names. This is the writer's rule (`sealEpoch`), which no writer works out for itself; an entry
   that breaks it still counts.
 - **A member judges an entry by no clock of its own but for one thing.** A device with `until` is
   let in only before that second by each PC's own clock, which never reads before the list's own
@@ -231,11 +233,16 @@ leaves a signer with no name.
 Two more rules are for writers alone. The account service holds every writer to them, and a member
 counts an entry that breaks one all the same:
 
-- **Nobody opens an epoch at will.** A member writes an `epoch` only where names can no longer be
-  sealed under the current one: somebody who may hold its key is out or over its time (`sealEpoch`
-  says so). After a removal that is the very next entry, in one batch: the `remove`, or several,
-  then one `epoch`. Where a device past its `until` or an invite past its `exp` is still in, it is
-  put out first. So an entry that did not get its place, an add say, is signed again on the new
+- **Nobody opens an epoch at will.** A member writes an `epoch` only after an entry that put
+  somebody who may hold the current epoch's key out, or took the last use of an invite that a PC
+  joins with by itself, at or after the entry that opened that epoch (`signListEntry` refuses any
+  other: `epoch_not_needed`). After a removal that is the very next entry, in one batch: the
+  `remove`, or several, then one `epoch`. A time that is over calls for no epoch by itself: where
+  a device at its `until` or such an invite past its `exp` is still in, nothing is sealed
+  (`sealEpoch` says null), and an `epoch` is refused all the same (`epoch_no_use`), since one
+  opened while that key is in would be followed by another, and another. That key is put out
+  first (`lapsedRemovals` gives the entries), and the epoch follows its `remove` in the same
+  batch. So an entry that did not get its place, an add say, is signed again on the new
   head and sealed under the same epoch as before: the service kept nothing of the request that did
   not place, the key wrapped for the newcomer included. Should an add be given up for good, a wrap
   for that key exists only at a service that lied about keeping nothing, and it opens names, never
@@ -278,11 +285,26 @@ falls behind; a `pc` gives that PC its keys; the key is ended. Without the keys 
 not tell which PC that end means, and would hold a PC that every other member had put out. Nobody
 new comes in by this, and no PC moves to another relay key.
 
+**A member that is behind signs nobody in.** What counts on its own state need not count for a
+member that reads everything, since it knows nothing of who came in after it fell behind. So while
+it is behind it writes a removal (`remove`) and the `epoch` after one, and nothing else:
+`signListEntry`, `signListEntries` and `joinEntry` refuse every other entry (`not_written`, reason
+`behind`), a PC's own `join` among them. An app shows that it needs an update, a PC that Ovis on
+it does. It lets nobody in while it is behind already; it writes nobody in either. The epoch it
+opens after a removal is wrapped to the members it knows (`wrapKeys` of its own state), and to no
+invite: it takes no `join` in, so it cannot tell whether an invite was spent since, and the account
+service refuses a whole request, the removal with it, for one wrap to a key that is out. So a
+member that came in after it fell behind, and a PC that joins with an open invite, get that
+epoch's key from a member that reads everything, and have no names until then.
+
 One thing a member that is behind cannot follow: which keys PCs that joined after it fell behind
 have. A `pc` that names such a key for a carried PC has no effect for a member that reads
-everything (`key_reused`), and the member that is behind takes it. No member that signs only what
-counts writes such an entry; one that does can leave a member that is behind holding that carried
-PC after the others put it out by its relay key, until that member is updated and replays.
+everything (`key_reused`), and the member that is behind takes it. No member writes such an entry
+through the functions above: one that reads everything is refused for the key, one that is behind
+for being behind. It takes a `full` signer that signs outside them, which is a member that turned
+against the list and could remove anybody anyway; its entry can leave a member that is behind
+holding that carried PC after the others put it out by its relay key, until that member is
+updated and replays.
 
 ### A card
 
@@ -355,7 +377,8 @@ Nothing is ever deleted. A device or an invite is in while its key is a signer, 
 `removed` is empty. A PC lets a device in while the device is in and, when it has an `until`, before
 that second, as what its `role` says. The key of an epoch is wrapped to the encryption key of each
 device and PC that is in, and to the own key of each open invite with `auto` `1`, so that a PC
-which joins with nobody else awake can read the names and seal its own. Whoever wraps leaves out a
+which joins with nobody else awake can read the names and seal its own (a member that is behind
+wraps to no invite, as said above). Whoever wraps leaves out a
 device past its `until` and an invite past its `exp`, by its own clock, so that an old line or a
 borrowed browser is given no later key; that clock chooses only whom a key is wrapped to, and lets
 nobody in and puts nobody out. A member that stopped for a replay answers for nobody until it has
@@ -363,7 +386,8 @@ replayed: it lets no device in, holds no PC, lists nothing, takes no invite for 
 nobody.
 
 A saved state is trusted exactly as far as the member's own storage is. Reading it back checks
-that it has its form and agrees with itself, which catches a state that was damaged, not one that
+that it has its form and agrees with itself (a state whose footing is entry 0 still takes a
+`carried`, for one: no entry has closed that), which catches a state that was damaged, not one that
 somebody who can write the store wrote with care. A member that starts replays the entries it
 kept and holds what the replay gives.
 
@@ -385,7 +409,9 @@ holds the invite: `ovis-list-read/1` and the fields `after` (the place its page 
 for the start), `at` (when it was made), `key` (the invite's key) and `list`, in the form of a
 body's fields, signed with the invite's key and written as one text like an entry. The account
 service checks the form (`proof_malformed`), then the signature (`signature_invalid`), then what
-the list holds of that invite, and judges `at` and the invite's `exp` by its own clock.
+the list holds of that invite, and judges `at` and the invite's `exp` by its own clock. A line
+signs only such a proof with its own key and list in it, and none that this check would call
+malformed.
 
 ## Names the service cannot read
 
@@ -492,7 +518,12 @@ plaintext = "ovis-list-sealed/1" field field ...
   and a thousand sealings for each, the chance is under 2^-49.
 - The epoch key never encrypts by itself: fields and links each use a key of their own made from it.
 - An epoch key belongs to one list and one epoch. It is never used for another list or made the
-  key of another epoch.
+  key of another epoch. The library holds both ends of that for a link: it makes none between two
+  epochs of one key, and a link that opens to the very key it was opened with gives no key
+  (`other_key`). Whoever was put out holds the key before, and would read on under the next number.
+- Entry 0 opens epoch 0, so its names are sealed under epoch 0 and no other. A writer seals none
+  under another, and for a reader a field of entry 0 under another epoch has not the form (`form`),
+  whatever its bytes are.
 
 ### Who seals, and when
 
@@ -552,9 +583,9 @@ or PC is then shown without its name:
 | why | when |
 |---|---|
 | `missing` | no wrap, link, key or sealed field was given |
-| `form` | a wrong length, another first byte, a point not on the curve, a plaintext that is no fields, a place that is none (a list id with seq 0, none with a later seq) |
+| `form` | a wrong length, another first byte, a point not on the curve, a plaintext that is no fields, a place that is none (a list id with seq 0, none with a later seq, entry 0 under another epoch than 0) |
 | `refused` | in form, but the tag does not hold: another member's wrap, another list, seq or epoch, another key, a changed byte |
-| `other_key` | a wrap or a link that opens, to a key that is not the one the list commits to. The name is hidden like any other, and the member also says so, because this is no lost or stale wrap. From a wrap it means the account service gave a wrong key: the service stores the wraps, and this is a sign of tampering. From a link it means the member that signed the entry which opened that epoch wrote a wrong link: the link is in the signed list, not the service's to change |
+| `other_key` | a wrap or a link that opens, to a key that is not the one the list commits to, or a link that opens to the key it was opened with. The name is hidden like any other, and the member also says so, because this is no lost or stale wrap. From a wrap it means the account service gave a wrong key: the service stores the wraps, and this is a sign of tampering. From a link it means the member that signed the entry which opened that epoch wrote a wrong link: the link is in the signed list, not the service's to change |
 | `bound` | the walk back opened as many links as one walk may |
 | `unavailable` | the runtime could not do it (no WebCrypto on a page on plain http): a fault of the place, not a verdict on the bytes |
 
@@ -859,7 +890,9 @@ bytes = "ovis-pc-add/1" len(purpose) purpose len(account) account len("") "" len
 
 `purpose` is `invite`, or `invite-auto` for an invite a machine joins with by itself; the empty
 value stands where a PC's id stands in the other proofs of this form, and `invite_key`, the
-invite's public key as [a key](#the-form), where a listing id does.
+invite's public key as [a key](#the-form), where a listing id does. `challenge` is the text the
+account service gave, as its UTF-8 bytes. Half of a surrogate pair alone has no such bytes (it
+would be written as U+FFFD, the bytes of another text), so a challenge that holds one is refused.
 
 ## On a device
 
@@ -1217,7 +1250,9 @@ object with a `name`, an optional `note`, one of `wrap`, `link` and `sealed`, an
   their values, as text, without `pad`) or `{ why }`, one of the codes above.
 
 Wraps, links and sealed fields are made with random bytes, so a vector fixes one to open; nobody is
-asked to make the same bytes again. The `-made-elsewhere` vectors were written by a second
+asked to make the same bytes again. Two vectors fix what a reader refuses although the bytes
+open: `link-same-key` (a link to the very key it was opened with) and `sealed-entry-0-epoch-1`
+(entry 0 under another epoch than 0); a reader that only opens takes both. The `-made-elsewhere` vectors were written by a second
 implementation, which also reads every vector in the tests with readers of its own (its base64url,
 its field form, its key prefix). The `-made-in-python` vectors (a wrap, a wrap of epoch 0 with its
 commitment, a link and a filled sealed field) were written once by a Python script that shares no
