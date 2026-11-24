@@ -139,6 +139,14 @@ export const STRINGS = {
   clearButton: " ^c clear ",
   cancelButton: " esc cancel ",
   confirmButton: " ↵ confirm ",
+  newWorktreeTitle: "new worktree",
+  newWorktreeBranch: "branch",
+  newWorktreeCheckout: "checkout",
+  newWorktreeButton: "↵ create and open",
+  removeWorktreeTitle: "delete worktree checkout?",
+  removeWorktreeFolder: "This removes the checkout folder:",
+  removeWorktreeKept: "The branch is not deleted. The workspace will close.",
+  removeWorktreeButton: "↵ remove",
   /** the copy feedback toast: its mark and its text are the notice's own (noticeText "copied") */
   toastMark: "●",
   helpRefusalsTitle: "Config Diagnostics",
@@ -180,6 +188,8 @@ export const STRINGS = {
     close_workspace: "Close",
     open_worktree: "Open worktree...",
     close_group: "Close group",
+    new_worktree: "New worktree",
+    delete_checkout: "Delete worktree checkout...",
     collapse_group: "Collapse",
     expand_group: "Expand",
   } as const,
@@ -231,6 +241,14 @@ export const STRINGS = {
   // Notice messages by code
   noticeText: (code: string, data: Readonly<Record<string, string | number>>): string => {
     switch (code) {
+      case "ovis_server_none":
+        return `${data["action"] === "delete_checkout" ? "Delete worktree checkout" : "New worktree"} needs the Ovis server: start it with \`ovis start\``;
+      case "ovis_server_address":
+        return "ovis_server_address: the Ovis server's address is not this PC's loopback; it was not asked";
+      case "ovis_server_refused":
+        return `${data["code"] ?? "refused"}: ${data["message"] || "the Ovis server refused it"}`;
+      case "not_linked_worktree":
+        return "not_linked_worktree: this workspace is not a linked worktree";
       case "ime_prefix":
         return "ime_prefix: switch to the English keyboard for prefix keys";
       case "not_built":

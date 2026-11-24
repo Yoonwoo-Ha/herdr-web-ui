@@ -1092,11 +1092,17 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     };
   };
   methods["worktree.create"] = (params) => oneAtATime(async () => {
+    if (params["expected_core"] !== undefined && params["expected_core"] !== (await hc.hello()).core.id) {
+      throw new AdapterError("worktree_other_core", "The Ovis server serves another core");
+    }
     const workspaceId = paneIdOf(params, "workspace_id");
     const branch = textOf(params, "branch");
     if (!branch) throw new AdapterError("invalid_params", "branch is required");
     const base = textOf(params, "base");
     const { shown, repository } = await inRepository(workspaceId);
+    if (params["expected_repo"] !== undefined && params["expected_repo"] !== repository.repo_key) {
+      throw new AdapterError("worktree_target_changed", "The workspace no longer names the selected repository");
+    }
     // as herdr: a worktree starts from the repository's own checkout, which the caller can ask instead
     if (repository.checkout !== repository.repo_root) throw new AdapterError("linked_worktree_source", `workspace ${workspaceId} is on a linked checkout of ${repository.repo_name}`);
     const path = typeof params["path"] === "string" && params["path"] !== "" ? params["path"] : defaultCheckoutPath(repository.repo_name, branch);
@@ -1140,12 +1146,19 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     return { type: "worktree_opened", ...opened, worktree: infoOf(repository, checkout, new Map([[checkout.path, opened.workspace.workspace_id]])), already_open: false };
   });
   methods["worktree.remove"] = (params) => oneAtATime(async () => {
+    if (params["expected_core"] !== undefined && params["expected_core"] !== (await hc.hello()).core.id) {
+      throw new AdapterError("worktree_other_core", "The Ovis server serves another core");
+    }
     const workspaceId = paneIdOf(params, "workspace_id");
     const { shown, gitIds, started } = await ownRead();
     const workspace = shown.workspaces.find((candidate) => candidate.workspace_id === workspaceId);
     if (!workspace) throw new AdapterError("workspace_not_found", `workspace ${workspaceId} not found`);
     const facts = workspace.worktree;
     if (!facts?.is_linked_worktree) throw new AdapterError("not_linked_worktree", `workspace ${workspaceId} is not a linked worktree`);
+    if ((params["expected_checkout"] !== undefined && params["expected_checkout"] !== facts.checkout_path)
+      || (params["expected_repo"] !== undefined && params["expected_repo"] !== facts.repo_key)) {
+      throw new AdapterError("worktree_target_changed", "The workspace no longer names the confirmed checkout");
+    }
     // only this workspace closes with the checkout: another one open on it, or with a terminal in it
     // (started there or gone there since), would be left in a deleted folder
     const inCheckout = (folder: string | null | undefined): boolean => {
@@ -1165,6 +1178,9 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
       if (gitId) break;
     }
     gitId ??= gitIds.get(workspaceId) ?? null;
+    if (params["expected_git_id"] !== undefined && (!now || params["expected_git_id"] !== gitDirIdentity(now.git_dir))) {
+      throw new AdapterError("worktree_target_changed", "The confirmed checkout was replaced");
+    }
     if (!now || now.repo_key !== facts.repo_key || now.checkout !== facts.checkout_path || now.checkout === now.repo_root || (gitId !== null && gitDirIdentity(now.git_dir) !== gitId)) {
       throw new AdapterError("worktree_not_found", `${facts.checkout_path} is no longer a worktree of ${facts.repo_name}`);
     }
@@ -1176,6 +1192,8 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
     return { type: "worktree_removed", workspace_id: workspaceId, path: facts.checkout_path, forced: force };
   });
 
+  methods["worktree.create_checked"] = methods["worktree.create"];
+  methods["worktree.remove_checked"] = methods["worktree.remove"];
   return async (request) => {
     const method = methods[request.method];
     // git runs here, and another machine's checkouts are there

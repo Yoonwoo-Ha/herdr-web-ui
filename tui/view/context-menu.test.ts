@@ -1,4 +1,6 @@
 import { afterEach, describe, expect, it } from "bun:test";
+import { defaultCheckoutPath } from "../../server/herdr-core/worktrees.ts";
+import { ovisServer, type OvisServer } from "../core/ovis-server.ts";
 import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -24,7 +26,7 @@ afterEach(async () => {
  * herdr's right-click world (docs/tui/visual-parity.md R1-R8): a tab split in LEFT and RIGHT and a second tab, a second
  * workspace; with `git`, a repository and a linked worktree of it on disk, each shown by a workspace of its own.
  */
-async function start(options: { git?: boolean; mouse?: boolean; nested?: boolean } = {}): Promise<Run> {
+async function start(options: { git?: boolean; mouse?: boolean; nested?: boolean; server?: OvisServer } = {}): Promise<Run> {
   const core = new FakeHcCore();
   const where = (space: string, tab: string, pane: string, cwd?: string) => ({ space: `w-${space}`, spaceName: space, tab: `t-${space}-${tab}`, tabName: tab, pane, ...(cwd ? { cwd } : {}) });
   place(core, where("work", "one", "LEFT"), "LEFT-READY\r\n");
@@ -51,7 +53,7 @@ async function start(options: { git?: boolean; mouse?: boolean; nested?: boolean
     place(core, where("repo", "main", "CODE", join(home, "repo")), "CODE-READY\r\n");
     place(core, where("feat", "wt", "WT", join(home, "repo-wt")), "WT-READY\r\n");
   }
-  const run = await Run.start({ core, cols: 120, rows: 40 });
+  const run = await Run.start({ core, cols: 120, rows: 40, ...(options.server ? { server: options.server } : {}) });
   runs.push(run);
   await run.live();
   await run.advance(10);
@@ -350,9 +352,9 @@ describe("a git workspace's entries (R7)", () => {
     const run = await start({ git: true });
     const repo = spaceId(run, "repo");
     const feat = spaceId(run, "feat");
-    // herdr's New worktree runs git: the screen leaves it out
+    // The repository menu offers both creating and opening a worktree.
     await rclick(run, cellOf(run, "repo"));
-    expect(menu(run)?.entries).toEqual(["rename_workspace", "close_workspace", "open_worktree"]);
+    expect(menu(run)?.entries).toEqual(["rename_workspace", "close_workspace", "new_worktree", "open_worktree"]);
     await escape(run);
     await choose(run, cellOf(run, "repo"), "Open worktree...");
     const dialog = top(run);
@@ -365,9 +367,9 @@ describe("a git workspace's entries (R7)", () => {
     const world = run.loop.model().world;
     expect([world.workspaces.find((one) => one.id === repo)?.group, world.workspaces.find((one) => one.id === feat)?.parent]).toEqual([{ collapsed: false }, repo]);
     expect(run.grid()[cellOf(run, "repo").y]!.slice(0, 26)).toBe(" · repo                 ▾│");
-    // a grouped worktree's own menu: herdr's Delete worktree checkout... runs git, and is left out
+    // a grouped worktree's own menu, as herdr's: Delete worktree checkout... (done by the Ovis server)
     await rclick(run, cellOf(run, "└─"));
-    expect(menu(run)?.entries).toEqual(["rename_workspace", "close_workspace"]);
+    expect(menu(run)?.entries).toEqual(["rename_workspace", "close_workspace", "delete_checkout"]);
     await escape(run);
     await run.keys(`click@${cellOf(run, "work").x + 1}:${cellOf(run, "work").y}`);
     await run.advance(50);
@@ -380,5 +382,107 @@ describe("a git workspace's entries (R7)", () => {
     await run.keys("enter");
     await run.advance(100);
     expect(run.core.calls().filter((call) => call.method === "terminal.kill").map((call) => call.params["terminal"]).sort()).toEqual(ends);
+  }, TEST_MS);
+});
+
+describe("New worktree and Delete worktree checkout... through the Ovis server (row 83)", () => {
+  /** a stand-in for the server's two routes: what was asked, and the answer the server gives (its shape and status) */
+  const standIn = (answers: Record<string, (body: Record<string, unknown>) => Response>) => {
+    const asked: { url: string; body: unknown }[] = [];
+    const server = ovisServer("http://127.0.0.1:9", async (url, init) => {
+      const body = JSON.parse(String(init.body)) as Record<string, unknown>;
+      asked.push({ url, body });
+      const answer = answers[url.slice(url.lastIndexOf("/") + 1).replace(/-checked$/, "")];
+      if (!answer) throw new TypeError("connection refused");
+      return answer(body);
+    });
+    return { asked, server };
+  };
+  const json = (status: number, body: unknown) => () => new Response(JSON.stringify(body), { status, headers: { "content-type": "application/json" } });
+
+  it("New worktree opens herdr's dialog with a suggested branch; Enter asks the server for that branch on the repository's workspace and goes to the new pane", async () => {
+    let made = "";
+    const { asked, server } = standIn({ create: (body) => json(200, { workspace_id: "w-feat", pane_id: made, path: "/x/repo-wt", branch: body["branch"], already_open: false })() });
+    const run = await start({ git: true, server });
+    // the server's answer names the pane it opened: here the worktree's, which the fake core already shows
+    made = paneId(run, "WT");
+    await choose(run, cellOf(run, " repo"), "New worktree");
+    await run.advance(100);
+    const dialog = top(run);
+    expect(dialog?.kind === "text" && dialog.purpose).toBe("create_worktree");
+    const branch = dialog?.kind === "text" ? dialog.field.graphemes.join("") : "";
+    expect(branch).toMatch(/^worktree\/[a-z]+-[a-z]+-[0-9a-f]{4}$/);
+    // the folder the server will use, as much of it as the dialog's line holds (how much depends on the home's length)
+    const rows = run.grid();
+    const label = rows.findIndex((line) => /│ checkout\s*│/.test(line));
+    const shown = rows[label + 1]!.split("│").find((part) => part.startsWith(" /"))!.trimEnd();
+    expect(` ${defaultCheckoutPath("repo", branch)}`.startsWith(shown)).toBe(true);
+    expect(shown.length).toBeGreaterThanOrEqual(Math.min(` ${defaultCheckoutPath("repo", branch)}`.length, 60));
+    await run.keys("enter");
+    await run.advance(300);
+    expect(asked).toEqual([{ url: "http://127.0.0.1:9/api/worktree/create-checked", body: { workspace_id: spaceId(run, "repo"), branch, expected_core: (await run.loop.link.hello()).core.id, expected_repo: join(folders.at(-1)!, "repo", ".git") } }]);
+    expect(run.loop.model().focus.workspace).toBe(spaceId(run, "feat"));
+  }, TEST_MS);
+
+  it("Delete worktree checkout... asks first with the checkout's folder; Enter asks the server to remove it; with no server the notice names `ovis`", async () => {
+    const { asked, server } = standIn({});
+    const run = await start({ git: true, server });
+    await choose(run, cellOf(run, " repo"), "Open worktree...");
+    await run.keys("down,enter");
+    await run.advance(300);
+    await choose(run, cellOf(run, "└─"), "Delete worktree checkout...");
+    await run.advance(100);
+    const dialog = top(run);
+    expect(dialog?.kind === "confirm" && dialog.purpose).toBe("remove_worktree");
+    expect(run.grid().some((line) => line.includes("delete worktree checkout?"))).toBe(true);
+    await run.keys("enter");
+    await run.advance(300);
+    expect(asked).toEqual([{ url: "http://127.0.0.1:9/api/worktree/remove-checked", body: {
+      workspace_id: spaceId(run, "feat"), expected_core: (await run.loop.link.hello()).core.id,
+      expected_repo: join(folders.at(-1)!, "repo", ".git"), expected_checkout: join(folders.at(-1)!, "repo-wt"),
+      expected_git_id: expect.any(String),
+    } }]);
+    expect(run.loop.model().notices.some((notice) => notice.code === "ovis_server_none")).toBe(true);
+  }, TEST_MS);
+
+  it.each(["before selection", "after drawing"])("requires a taken delete question after resize %s", async (when) => {
+    const { asked, server } = standIn({});
+    const run = await start({ git: true, server });
+    await choose(run, cellOf(run, " repo"), "Open worktree...");
+    await run.keys("down,enter");
+    await run.advance(300);
+    if (when === "before selection") {
+      await rclick(run, cellOf(run, "└─"));
+      run.host.resize(100, 5);
+      await run.advance(100);
+      await run.keys("down,down,enter");
+    } else {
+      await choose(run, cellOf(run, "└─"), "Delete worktree checkout...");
+      expect(run.grid().some((line) => line.includes("delete worktree checkout?"))).toBe(true);
+      run.host.resize(100, 5);
+    }
+    await run.advance(100);
+    expect(top(run)?.kind).toBe("confirm");
+    expect(run.grid().some((line) => line.includes("delete worktree checkout?"))).toBe(false);
+    await run.keys("enter");
+    await run.advance(100);
+    expect(asked).toEqual([]);
+    run.host.resize(120, 40);
+    await run.advance(100);
+    await run.keys("enter");
+    await run.advance(100);
+    expect(asked.map(({ url }) => url)).toEqual(["http://127.0.0.1:9/api/worktree/remove-checked"]);
+  }, TEST_MS);
+
+  it("the server's refusal is said in its own words, and nothing else changes", async () => {
+    const { server } = standIn({ create: json(404, { error: { code: "worktree_create_failed", message: "fatal: a branch named 'x' already exists" } }) });
+    const run = await start({ git: true, server });
+    const before = run.loop.model().world.workspaces.length;
+    await choose(run, cellOf(run, " repo"), "New worktree");
+    await run.advance(100);
+    await run.keys("enter");
+    await run.advance(300);
+    expect(run.grid().some((line) => line.includes("worktree_create_failed: fatal: a branch named"))).toBe(true);
+    expect(run.loop.model().world.workspaces.length).toBe(before);
   }, TEST_MS);
 });

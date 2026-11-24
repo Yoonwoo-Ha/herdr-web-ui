@@ -14,13 +14,13 @@ import type { Held } from "./guard.ts";
 export const SCREEN_HOLD = "OVIS_TUI_HOLD";
 
 /** What the file holds for each: one byte, so that saying it is one write. */
-const BYTES: Readonly<Record<Held, string>> = { none: "0", modes: "1", "modes+watch": "2" };
+export const HOLD_BYTES: Readonly<Record<Held, string>> = { none: "0", modes: "1", "modes+watch": "2" };
 
 /** Makes the file, saying that nothing is held; false where it cannot be made or read back, and so cannot be handed to a screen. */
 export function makeHold(file: string): boolean {
   try {
-    writeFileSync(file, BYTES.none, { mode: 0o600 });
-    return readFileSync(file, "utf8") === BYTES.none;
+    writeFileSync(file, HOLD_BYTES.none, { mode: 0o600 });
+    return readFileSync(file, "utf8") === HOLD_BYTES.none;
   } catch { return false; }
 }
 
@@ -32,7 +32,7 @@ export function openHold(file: string): (held: Held) => void {
   let fd: number;
   try { fd = openSync(file, "w"); } catch { return () => undefined; }
   return (held) => {
-    try { writeSync(fd, BYTES[held], 0); } catch { /* nobody is told */ }
+    try { writeSync(fd, HOLD_BYTES[held], 0); } catch { /* nobody is told */ }
   };
 }
 
@@ -40,5 +40,5 @@ export function openHold(file: string): (held: Held) => void {
 export function readHold(file: string): Held {
   let text: string;
   try { text = readFileSync(file, "utf8"); } catch { return "none"; }
-  return text === BYTES.modes ? "modes" : text === BYTES["modes+watch"] ? "modes+watch" : "none";
+  return text === HOLD_BYTES.modes ? "modes" : text === HOLD_BYTES["modes+watch"] ? "modes+watch" : "none";
 }

@@ -137,7 +137,7 @@ export function mainHelp(context: CliContext): string {
     "Ovis - herdr in your browser and on your phone",
     "",
     "Usage: ovis <command> [flags]",
-    "       ovis              (no command) this help",
+    context.tui ? "       ovis              Open the terminal screen when a core is running; otherwise show status" : "       ovis              Show status",
   ];
   for (const [title, names] of GROUPS) {
     const shown = names.filter((name) => offered(name, context) && (name !== "tui" || context.tui));

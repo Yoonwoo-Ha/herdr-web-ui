@@ -5,7 +5,8 @@
  *
  * The launcher finds the core the screen joins, starts the screen as a child and stays until it ends: it gives the
  * terminal back when the screen died by a signal. When no core answers, it asks before it starts one; no other path
- * starts a core. It asks the Ovis server nothing and takes no turn in the plugin's lifecycle lock.
+ * starts a core. It reads the local server's address for the screen's worktree actions but does not contact it or
+ * take the plugin's lifecycle lock.
  */
 import { existsSync, mkdtempSync, readFileSync, readSync, rmSync, writeSync } from "node:fs";
 import { constants, userInfo } from "node:os";
@@ -18,8 +19,11 @@ import { coreLaunchEnv, withoutAskpass } from "../server/herdr-core/core-env.ts"
 import { coreSocket } from "../server/herdr-core/core-socket.ts";
 import { type Held, undoHeld } from "../tui/host/guard.ts";
 import { makeHold, readHold, SCREEN_HOLD } from "../tui/host/hold.ts";
-import { EXIT_FAILED, parseArgs, SCREEN_FOLDER, targetEnv } from "../tui/start.ts";
+import { EXIT_FAILED, parseArgs, SCREEN_FOLDER, SCREEN_SERVER, targetEnv } from "../tui/start.ts";
 import { openLibc } from "../tui/host/libc.ts";
+import { loopbackOrigin } from "../shared/loopback-origin.ts";
+import { appOrigin } from "./plugin-port.ts";
+import { execWaiter } from "./plugin-tui-waiter.ts";
 import { discardTyped, macExecEnv } from "./libc.ts";
 import { ENV_FILES, ownDir, readEnvFile } from "./plugin-settings.ts";
 
@@ -40,7 +44,7 @@ const SCREEN_READS: ReadonlySet<string> = new Set(["OVIS_TUI_STATE_DIR", "OVIS_A
 
 /**
  * The screen's environment: the caller's (with the chosen core), without any of Ovis's own names but the ones the
- * screen reads, without another core's scope and without Ovis's SSH askpass. The screen talks to herdr-core alone.
+ * screen reads, without another core's scope and without Ovis's SSH askpass.
  */
 export function tuiEnv(caller: Env): Record<string, string> {
   const env: Record<string, string> = {};
@@ -200,6 +204,8 @@ export interface LaunchParts {
   readonly isTty: boolean;
   /** the caller's environment */
   readonly caller: Env;
+  /** the account's home, even when the caller's HOME was withheld */
+  readonly home?: string;
   /** Ovis's settings files (`env`, `.env`) */
   readonly settings: Env;
   readonly screen: ScreenStart;
@@ -223,6 +229,8 @@ export interface LaunchParts {
   /** a line typed at the terminal in cooked mode and sent with Enter; null at the end of the input, text before it or not */
   line(): string | null;
   run(command: readonly string[], options: { env: Record<string, string>; cwd: string }): Screen;
+  /** Replace this process with the waiter; returns only if unavailable. */
+  handOver?: typeof execWaiter;
   /** a hold file for one screen, made and checked; null where none can be made (nothing is undone for that screen) */
   holdFile(): HoldFile | null;
   readonly terminal: TerminalSettings;
@@ -236,18 +244,35 @@ export interface LaunchParts {
  * a wrong argument go to the screen's entry as they are, which answers them. The exit code is the screen's, 128 + the
  * signal that ended it, or 1 when it did not start.
  */
-export async function launchTui(argv: readonly string[], parts: LaunchParts): Promise<number> {
+export function launchTui(argv: readonly string[], parts: LaunchParts): Promise<number> {
+  return launch(argv, parts, "explicit").then((code) => code ?? EXIT_FAILED);
+}
+
+export const isBareTui = (argv: readonly string[]): boolean => argv[0] === undefined || argv[0] === "--session" || argv[0].startsWith("--session=");
+
+/** A bare invocation only joins a core that already answers. Null leaves the invocation to `ovis status`. */
+export function launchBareTui(argv: readonly string[], parts: LaunchParts): Promise<number | null> {
+  if (!isBareTui(argv) || !parts.isTty || parts.platform === "win32") return Promise.resolve(null);
+  return launch(argv, parts, "bare");
+}
+
+async function launch(argv: readonly string[], parts: LaunchParts, mode: "bare" | "explicit"): Promise<number | null> {
   const say = (code: string, text: string) => parts.err(`ovis tui: ${code}: ${text}\n`);
   if (parts.platform === "win32") {
     parts.err(WINDOWS_MESSAGE);
     return EXIT_FAILED;
   }
   const args = parseArgs(argv);
-  if (args.kind !== "run") return runScreen([...argv], tuiEnv(parts.caller), parts);
-  if (parts.caller[TUI_BIN_VARIABLE] || parts.settings[TUI_BIN_VARIABLE]) say("tui_bin_unused", `${TUI_BIN_VARIABLE} is no longer used: the screen is part of Ovis now`);
+  if (args.kind !== "run") return mode === "bare" ? null : runScreen([...argv], tuiEnv(parts.caller), parts);
+  const warnOldBinary = () => {
+    if (parts.caller[TUI_BIN_VARIABLE] || parts.settings[TUI_BIN_VARIABLE]) say("tui_bin_unused", `${TUI_BIN_VARIABLE} is no longer used: the screen is part of Ovis now`);
+  };
+  if (mode === "explicit") warnOldBinary();
   const chosen = coreChoice(args.session, parts.caller, parts.settings);
   const target = coreSocket({ env: chosen });
   const found = await parts.probe(target.path);
+  if (mode === "bare" && found.kind !== "core") return null;
+  if (mode === "bare") warnOldBinary();
   if (found.kind === "failed") {
     say(found.code, found.reason);
     return EXIT_FAILED;
@@ -284,7 +309,9 @@ export async function launchTui(argv: readonly string[], parts: LaunchParts): Pr
     say("not_a_terminal", "stdin and stdout must both be a terminal");
     return EXIT_FAILED;
   }
-  return runScreen([], { ...tuiEnv(chosen), [SCREEN_FOLDER]: parts.folder }, parts);
+  const home = parts.home ?? (parts.caller["HOME"] || accountHome());
+  const origin = loopbackOrigin(appOrigin(mergeEnvLayers([parts.caller, parts.settings]), home));
+  return runScreen([], { ...tuiEnv(chosen), [SCREEN_FOLDER]: parts.folder, [SCREEN_SERVER]: origin ?? "" }, parts);
 }
 
 /**
@@ -308,20 +335,23 @@ async function runScreen(argv: string[], env: Record<string, string>, parts: Lau
       parts.err(`ovis tui: screen_missing: the screen's file ${parts.screen.file} is missing; reinstall Ovis\n`);
       return EXIT_FAILED;
     }
-    const saved = parts.terminal.save();
     hold = parts.holdFile();
+    const command = [...parts.screen.command, ...argv];
+    const options = { env: hold === null ? env : { ...env, [SCREEN_HOLD]: hold.path }, cwd: parts.screen.cwd };
     try {
-      child = parts.run([...parts.screen.command, ...argv], { env: hold === null ? env : { ...env, [SCREEN_HOLD]: hold.path }, cwd: parts.screen.cwd });
+      if (hold !== null) parts.handOver?.(command, options, hold.path);
+      const saved = parts.terminal.save();
+      child = parts.run(command, options);
+      const end = await child.exited;
+      if (end.signal === null) return end.code ?? EXIT_FAILED;
+      if (saved !== null) parts.terminal.restore(saved);
+      const undo = undoHeld(hold?.held() ?? "none");
+      if (undo !== "") parts.terminal.write(undo);
+      return 128 + (constants.signals[end.signal] ?? 0);
     } catch (error) {
       parts.err(`ovis tui: start_failed: the screen could not be started: ${error instanceof Error ? error.message : String(error)}\n`);
       return EXIT_FAILED;
     }
-    const end = await child.exited;
-    if (end.signal === null) return end.code ?? EXIT_FAILED;
-    if (saved !== null) parts.terminal.restore(saved);
-    const undo = undoHeld(hold?.held() ?? "none");
-    if (undo !== "") parts.terminal.write(undo);
-    return 128 + (constants.signals[end.signal] ?? 0);
   } finally {
     hold?.remove();
     for (const off of offs) off();
@@ -412,6 +442,7 @@ export function systemParts(caller: Env, home: string): LaunchParts {
     platform: process.platform,
     isTty: isatty(0) && isatty(1),
     caller,
+    home,
     settings: readSettings(caller, home),
     screen: screenStart(),
     folder: process.cwd(),
@@ -461,5 +492,11 @@ function accountHome(): string {
 export async function runTui(args: readonly string[], kernel: () => string | null = kernelEnv, account: () => string = accountHome): Promise<number> {
   // the screen and a core it starts get what the shell gave, never what Bun took from the working folder
   const caller = callerEnv({ kernel, env: process.env, cwd: process.cwd() });
-  return launchTui(args, systemParts(caller, caller["HOME"] || account()));
+  return launchTui(args, { ...systemParts(caller, caller["HOME"] || account()), handOver: execWaiter });
+}
+
+export function runBareTui(args: readonly string[]): Promise<number | null> {
+  if (!isBareTui(args) || process.platform === "win32" || !isatty(0) || !isatty(1)) return Promise.resolve(null);
+  const caller = callerEnv({ kernel: kernelEnv, env: process.env, cwd: process.cwd() });
+  return launchBareTui(args, { ...systemParts(caller, caller["HOME"] || accountHome()), handOver: execWaiter });
 }

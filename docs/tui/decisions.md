@@ -5,14 +5,15 @@ This file records the design decisions behind Ovis's own herdr-core terminal scr
 ## Decisions
 
 - D1: the screen is written in TypeScript inside the Ovis repository and its existing compiled binary, on the in-tree libghostty-vt wasm, reusing the herdr-core client and model in `server/herdr-core`. Reason: the release pipeline stays the same, the layout and state rules exist once, a Windows binary already exists and CI runs on the existing runners. The known weakness: Bun's terminal I/O has regressed between versions.
-- D2: the screen talks to herdr-core only. It never asks the Ovis server anything and gets no Ovis token. Things only the Ovis server knows (question cards, readable last turn, pins, automatic tab names) are not built; an agent's question is answered by entering its terminal, as in herdr.
+- D2: the screen takes its view from herdr-core. It gets no Ovis token. Only creating and deleting worktree checkouts go to the Ovis server, over direct loopback HTTP, since that server runs git. Question cards, the readable last turn, pins and automatic tab names stay in the browser; an agent's question is answered by entering its terminal, as in herdr.
 - D3: Windows comes last. It adds an `ovis` command on Windows and checks keyboard, mouse, paste and resize on Windows; whatever does not pass is reported, and Windows then prints one line instead of opening the screen.
 - D4: with no herdr-core running, `ovis tui` at a terminal asks whether to start it. Enter or y starts the core with an environment scrubbed of Ovis secrets and herdr pane ids and opens the screen; n prints the start command and exits. Nothing starts a core without that yes. Reason: a core outlives the screen and holds the user's terminals, so starting one is the user's choice.
 - D5: no herdr code is copied or translated. herdr, hc-tui and rodeo are read as descriptions of behaviour only, and every line is written new.
 
 ## Defaults
 
-- A2: `ovis tui` opens the screen; `ovis status` is unchanged. `ovis --help`, `ovis --version` and what plain `ovis` does stay the command line's own (`scripts/plugin-cli.ts`): `ovis tui --help` is answered there, and the screen is started before the command line reads the install's state.
+- A1: plain `ovis` at a terminal joins an already running herdr-core session. Otherwise it prints `ovis status` output and exits with its code. It never starts a core.
+- A2: `ovis tui` opens the screen explicitly; `ovis status` is unchanged. `ovis --help`, `ovis --version` and `ovis tui --help` are still the command line's own (`scripts/plugin-cli.ts`). The screen starts before the command line's lifecycle work.
 - A3: keys follow herdr's bindings through `shared/herdr-keys.ts` (the user's herdr config when present, herdr's defaults otherwise), with prefix ctrl+b, so that the screen feels like herdr.
 - A4: the hc-tui based client in `crates/ovis-tui`, its pin, patches, workflow and notices are removed once `ovis tui` opens this screen and it has passed the rule tests carried over from that client.
 - A5: outside the sidebar, status words and colours follow Ovis ("Needs you", "Working", "Done", "Ready"; theme tokens from `src/styles.css` through the generator); the sidebar uses herdr's own words and colours ([parity.md](parity.md)).

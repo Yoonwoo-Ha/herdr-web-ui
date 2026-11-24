@@ -158,9 +158,16 @@ describe("the screen's product code", () => {
       "tui/input/ and tui/model/ read no clock and arm no timer: take the time as an argument from the caller, and name every wait or limit in tui/model/deadlines.ts.");
   });
 
-  it("never reaches the Ovis server", () => {
-    fail(matches(productCode(), /\bfetch\s*\(|\/api\//),
-      "The screen talks to herdr-core only, never to the Ovis server: no fetch( and no /api/ route under tui/. Use the core connection (server/herdr-core/ files on the closure list) instead.");
+  it("reaches the Ovis server only through tui/core/ovis-server.ts, and only its worktree routes", () => {
+    // herdr's New worktree and Delete worktree checkout... run git, which only the Ovis server does (row 83): that one
+    // file may call it, on the two checked worktree routes and nothing else
+    const door = "tui/core/ovis-server.ts";
+    const routes = [...read(door).matchAll(/\/api\/[^`"'\s)]*/g)].map((match) => match[0]);
+    fail([
+      ...matches(productCode().filter((file) => file !== door), /\bfetch\s*\(|\/api\//),
+      ...routes.filter((route) => route !== "/api/worktree/${route}-checked").map((route) => `${door}: ${route}`),
+    ], "The screen talks to herdr-core, and to the Ovis server only in tui/core/ovis-server.ts for the checked worktree calls.");
+    expect(routes).toEqual(["/api/worktree/${route}-checked"]);
   });
 
   it("never names the Ovis server's settings", () => {

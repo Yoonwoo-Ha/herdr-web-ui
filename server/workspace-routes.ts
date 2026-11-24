@@ -294,10 +294,10 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     return jsonResponse({ entries }, 200, wordedHeaders());
   }
 
-  if (pathname === "/api/worktree/remove") {
+  if (pathname === "/api/worktree/remove" || pathname === "/api/worktree/remove-checked") {
     setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
-    const payload = await readJsonObject<{ workspace_id?: unknown; force?: unknown }>(request);
+    const payload = await readJsonObject<{ workspace_id?: unknown; force?: unknown; expected_core?: unknown; expected_repo?: unknown; expected_checkout?: unknown; expected_git_id?: unknown }>(request);
     if (payload instanceof Response) return payload;
     if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
       return badRequest("missing_workspace_id", "workspace_id is required");
@@ -306,7 +306,15 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     // git can take a while to delete a large checkout; Bun's default idle timeout is shorter.
     bunServer.timeout(request, 75);
     try {
-      const removed = await worktreeRemove(payload.workspace_id, payload.force === true);
+      const { expected_core, expected_repo, expected_checkout, expected_git_id } = payload;
+      let removed;
+      if (pathname === "/api/worktree/remove-checked") {
+        if (typeof expected_core !== "string" || !expected_core || typeof expected_repo !== "string" || !expected_repo
+          || typeof expected_checkout !== "string" || !isAbsolute(expected_checkout) || typeof expected_git_id !== "string" || !expected_git_id) {
+          return badRequest("invalid_worktree_target", "the confirmed core, repository, checkout and git directory identity are required");
+        }
+        removed = await worktreeRemove(payload.workspace_id, false, undefined, { expected_core, expected_repo, expected_checkout, expected_git_id });
+      } else removed = await worktreeRemove(payload.workspace_id, payload.force === true);
       broadcastAll({ type: "session-changed" });
       return jsonResponse({ ok: true, path: removed.path, forced: removed.forced });
     } catch (error) {
@@ -314,10 +322,10 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     }
   }
 
-  if (pathname === "/api/worktree/create" || pathname === "/api/worktree/open") {
+  if (pathname === "/api/worktree/create" || pathname === "/api/worktree/create-checked" || pathname === "/api/worktree/open") {
     setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "use POST");
-    const payload = await readJsonObject<{ workspace_id?: unknown; branch?: unknown; base?: unknown; label?: unknown; path?: unknown; agent?: AgentPayload | null }>(request);
+    const payload = await readJsonObject<{ workspace_id?: unknown; branch?: unknown; base?: unknown; label?: unknown; path?: unknown; agent?: AgentPayload | null; expected_core?: unknown; expected_repo?: unknown }>(request);
     if (payload instanceof Response) return payload;
     if (typeof payload.workspace_id !== "string" || payload.workspace_id.length === 0) {
       return badRequest("missing_workspace_id", "workspace_id is required");
@@ -341,7 +349,11 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
       if (payload.path !== "") path = payload.path;
     }
     if (path !== undefined && !isAbsolute(path)) return badRequest("invalid_path", "path must be absolute");
-    const creating = pathname === "/api/worktree/create";
+    const checked = pathname === "/api/worktree/create-checked";
+    const creating = checked || pathname === "/api/worktree/create";
+    const { expected_core, expected_repo } = payload;
+    const expected = checked && typeof expected_core === "string" && expected_core && typeof expected_repo === "string" && expected_repo ? { expected_core, expected_repo } : undefined;
+    if (checked && !expected) return badRequest("invalid_worktree_target", "the selected core and repository are required");
     const agent = creating ? payload.agent ?? undefined : undefined;
     const fault = agentFault(agent);
     if (fault !== null) return badRequest("invalid_agent", fault);
@@ -353,7 +365,7 @@ export async function handleWorkspaceRequest(request: Request, url: URL, pathnam
     try {
       const asked = payload.workspace_id;
       const from = (workspaceId: string) => creating
-        ? worktreeCreate({ workspaceId, branch: branch as string, base, label, path })
+        ? worktreeCreate({ workspaceId, branch: branch as string, base, label, path, ...(expected ? { expected } : {}) })
         : worktreeOpen({ workspaceId, path, branch, label });
       // herdr starts a worktree only from the workspace on the repository's main checkout. Asked
       // from a workspace on another checkout (herdr does not mark one it did not open as a

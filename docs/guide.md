@@ -155,7 +155,7 @@ Its terminals are its own. The app starts a herdr-core of its own (the session `
 **The `ovis` command:** the installer puts it in `~/.local/bin`. It runs the installed Ovis's own command line (`scripts/plugin.ts`), which it finds each time it runs, so it keeps working after an update or a reinstall:
 
 ```bash
-ovis           # at a terminal: the help (in a script or a pipe: ovis status)
+ovis           # at a terminal with a running herdr-core: its terminals; otherwise: ovis status
 ovis tui       # herdr-core's terminals in this terminal, with herdr's keys (Linux and macOS)
 ovis login     # add this PC to your Ovis account (also: ovis add): sign in, type yes, then press Add on your phone
 ovis join --invite-file ./ovis-invite.txt   # the same with an invite a device of the account made (your file's path), no sign-in here
@@ -171,7 +171,11 @@ ovis --help    # every command; ovis <command> --help for one
 `ovis --help` and `ovis <command> --help` only print, and a flag a command does not take is refused (exit 2) before
 anything runs. The older names keep working without a word: `add` and `link` are `login`, `link --code` is
 `pair --relay`, and `pair --approve` is `approve`. On Windows, `install.ps1` puts `ovis` (`ovis.cmd`, beside the
-compiled server) on your PATH for new terminals; plain `ovis` there prints the help.
+compiled server) on your PATH for new terminals; plain `ovis` there shows `ovis status`.
+
+Plain `ovis` opens the [terminal screen](tui.md) if the selected herdr-core session is already running and both
+standard input and output are terminals. Otherwise it prints the same output and exits with the same code as
+`ovis status`. Only explicit `ovis tui` offers to start a core.
 
 An `ovis` of your own that is already in `~/.local/bin` is left as it is, and the installer says so. So is another `ovis` elsewhere on your PATH: where `~/.local/bin` comes before it, the installer writes no command, since that would take its name; where it comes first, the installer writes the command and says to call it by its path. That other `ovis` keeps the name only until `~/.local/bin` comes before it on your PATH (a shell profile that puts `~/.local/bin` first does that at the next login), and from then on `ovis` is the installer's command. Without the command (an install from before it, until the installer is run again; Windows; a checkout), run the script itself, `bun scripts/plugin.ts <command>`, in the folder that holds Ovis: a checkout, or the plugin's own folder:
 

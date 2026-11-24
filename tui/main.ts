@@ -8,7 +8,7 @@
 import { realpathSync } from "node:fs";
 import { homedir } from "node:os";
 import { version } from "../package.json";
-import { ending, EXIT_CRASH, EXIT_FAILED, EXIT_OK, EXIT_USAGE, insideOwnCore, parseArgs, screenFolder, stateFolder, targetEnv, USAGE } from "./start.ts";
+import { ending, EXIT_CRASH, EXIT_FAILED, EXIT_OK, EXIT_USAGE, insideOwnCore, parseArgs, SCREEN_SERVER, screenFolder, stateFolder, targetEnv, USAGE } from "./start.ts";
 
 const say = (code: string, text: string) => process.stderr.write(`ovis tui: ${code}: ${text}\n`);
 
@@ -39,6 +39,7 @@ const { herdrConfigPath, readHerdrConfig } = await import("../server/herdr-sideb
 const { userHome } = await import("../server/user-home.ts");
 const { createUnixHost } = await import("./host/unix.ts");
 const { startLoop } = await import("./loop.ts");
+const { ovisServer } = await import("./core/ovis-server.ts");
 const { crashRecord, recordCrash } = await import("./crash.ts");
 const { ViewStore } = await import("./view-store.ts");
 
@@ -65,6 +66,7 @@ const loop = startLoop({
   socket: target.path,
   session: target.session,
   cwd: screenFolder(env, process.cwd()),
+  server: ovisServer(env[SCREEN_SERVER] ?? null),
   home: realHome,
   keys: readKeys(),
   readKeys,

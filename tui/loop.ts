@@ -40,6 +40,7 @@ import { CopyView } from "./view/copy.ts";
 import { type DeferredMouse, type PaneLook, type PanePicture, Pointer, type PointerAct, type PointerScene, rowsAboveBottom } from "./view/mouse.ts";
 import { type HitMap, Painter, type PaneScene } from "./view/paint.ts";
 import { layOut, paneScene, type PaneSpot, type ScreenShape } from "./view/screen.ts";
+import { ovisServer, type OvisServer } from "./core/ovis-server.ts";
 import type { ViewStore } from "./view-store.ts";
 
 /** The caller's clock and its one timer: `arm` sets the timer for `at` (on the same clock) and answers its cancel. */
@@ -69,6 +70,8 @@ export interface LoopOptions {
   views?: ViewStore;
   /** the wall clock in ms, shared by every screen on this PC (tui/core/layout.ts `wall`); unset: the system's */
   wall?: () => number;
+  /** the Ovis server the launcher named, for herdr's New worktree and Delete worktree checkout...; none: they say to start it */
+  server?: OvisServer;
 }
 
 export type { LoopEnd } from "./loop-end.ts";
@@ -268,12 +271,9 @@ export function startLoop(options: LoopOptions): Loop {
     folder: options.cwd,
     home: options.home,
     wall: options.wall,
+    server: options.server ?? ovisServer(null),
     answer: (answer) => {
-      guard(() => dispatch(answer.type === "notice"
-        ? { type: "notice", code: answer.code, data: answer.data, ...(answer.calm ? { calm: true } : {}), at: clock.now() }
-        : answer.type === "worktrees"
-          ? { type: "worktrees", target: answer.target, checkouts: answer.checkouts, at: clock.now() }
-          : { type: "follow", target: answer.target, away: answer.away, at: clock.now() }));
+      guard(() => dispatch({ ...answer, at: clock.now() }));
       arm();
     },
   });
@@ -696,9 +696,13 @@ export function startLoop(options: LoopOptions): Loop {
   const USER_EVENTS: ReadonlySet<ModelEvent["type"]> = new Set(["key", "text", "paste", "mouse", "action", "select", "close_overlay", "choose", "hover", "context"]);
 
   /** One event through the state core, and its effects performed in order, now. */
+  let paintedDelete: ModelState["overlays"][number] | undefined;
+
   function dispatch(event: ModelEvent, route?: DeferredMouse): void {
     const before = state;
     const step = reduce(state, event);
+    if (step.effects.some((effect) => effect.type === "run" && effect.action === "remove_worktree")
+      && (paintedDelete === undefined || paintedDelete !== before.overlays.at(-1))) return;
     const user = USER_EVENTS.has(event.type);
     if (step.state !== before) {
       if (user) {
@@ -1180,6 +1184,7 @@ export function startLoop(options: LoopOptions): Loop {
     // taken before the write, as the overlay is: input read during it may move the focus the frame does not show
     const frameFocus = paneFocus;
     const chrome = chromeOf(frameShape, scroll, copying);
+    const framePainter = painter;
     const frame = painter.paint({
       width: size.cols, height: size.rows, parts: chrome.parts,
       panes: scenes, overlays: chrome.overlays, focus: paneFocus, input: chrome.input, dim: chrome.dim,
@@ -1191,6 +1196,8 @@ export function startLoop(options: LoopOptions): Loop {
     }
     painter.taken(taken);
     if (ended || !taken) return;
+    paintedDelete = framePainter === painter && frameMenu?.kind === "confirm" && frameMenu.purpose === "remove_worktree"
+      && chrome.overlays.some((part) => part.key === "overlay:confirm") ? frameMenu : undefined;
     hits = frame.hits;
     drawn = nextDrawn;
     presented = { pane: frameFocus, overlay: frameMenu !== undefined };
@@ -1240,6 +1247,7 @@ export function startLoop(options: LoopOptions): Loop {
   }
 
   function rebuildPainter(): void {
+    paintedDelete = undefined;
     if (!painter) return;
     painter = new Painter({ sync, colors: host.colorDepth });
     grids = new Map();

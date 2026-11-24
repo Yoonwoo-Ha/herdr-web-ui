@@ -450,6 +450,8 @@ describe("demo transport", () => {
   const answered = (route: string) => exact.has(route) || prefixes.some((prefix) => route.startsWith(prefix));
 
   const DEMO_404: Record<string, string> = {
+    "/api/worktree/create-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
+    "/api/worktree/remove-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
     "/api/account/confirm": "a PC-local screen confirmation (the PC's own confirm page); a browser over the demo never answers one",
     "/api/account/confirm-page": "opens the PC's own confirm page for a key that waits: only with the release flag on, which the demo never is",
     "/api/account/forget": "a PC-local recovery act (ovis recover / the PC's screen); the demo's browser never asks for it",

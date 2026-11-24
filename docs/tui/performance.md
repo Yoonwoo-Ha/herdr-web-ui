@@ -63,9 +63,22 @@ A pane now attaches again 32 ms after the last change of its own rectangle inste
 | RSS change from 20-pane idle to after churn (KiB) | 33436 [23964, 36336] | 34790 [30968, 51356] |
 | Lone key to visible echo (ms) | 2.164 [2.01, 3.069] | 2.186 [1.925, 2.659] |
 
-The build measured after also launched the screen differently; the launch path takes no part in a resize, a churn or a key echo.
+The build measured after also had the launcher change below; the launch path takes no part in a resize, a churn or a key echo.
 
 - **Churn:** not changed. The screen's growth is not its JS heap, its engines' history or a queue: a probe from inside the screen found the JS heap, ArrayBuffers and the engines' WebAssembly memory back at their idle sizes, and repeated churns adding nothing after the first. The runtime keeps the first burst's peak pages and gives most of them back on its own within about 20 s (+8 to +10 MB stays); at the harness's sample, 100 ms after the churn, they are still held.
+
+## After the launcher change
+
+`ovis` no longer stays beside the screen: once its checks are done, the Bun launcher replaces itself (`execve`) with a small shell that waits for the screen, keeps its exit code, passes SIGTERM and SIGHUP on and gives the terminal back after a signal the screen cannot catch. Measured with the same harness, ten runs per build, Ovis only; median [min, max], RSS in KiB, stack only:
+
+| Metric | Before | After |
+| --- | ---: | ---: |
+| Idle RSS, 4 panes | 113186 [112128, 114060] | 80660 [79980, 81432] |
+| Idle RSS, 20 panes | 118252 [117992, 118572] | 85230 [84920, 85820] |
+| Launcher, or the waiter in its place, at 20 panes | 34988 [34704, 35144] | 1968 [1964, 1968] |
+| Client launch to first frame (ms) | 171.126 [167.255, 174.947] | 178.902 [175.637, 183.803] |
+
+About 33 MB left the stack; launch is about 8 ms slower.
 
 ## Raw numbers
 

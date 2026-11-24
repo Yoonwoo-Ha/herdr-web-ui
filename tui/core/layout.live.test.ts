@@ -1,4 +1,5 @@
 import { afterAll, describe, expect, it } from "bun:test";
+import { ovisServer } from "./ovis-server.ts";
 import { constants } from "node:os";
 import { coreFolder, IsolatedCore, type StopReport, stoppedCleanly } from "../../scripts/test-hc.ts";
 import { OVIS_LAYOUT_DOC } from "../../server/herdr-core/layout-doc.ts";
@@ -50,7 +51,7 @@ describe.skipIf(!bin || process.platform === "win32")("the screen's layout write
     const hc = link;
 
     const answers: LayoutAnswer[] = [];
-    const writes = new LayoutWrites({ hc, model: { firstTurn: (terminal) => terminal.turn ?? 0, host: null }, folder: core.root, answer: (answer) => answers.push(answer) });
+    const writes = new LayoutWrites({ hc, model: { firstTurn: (terminal) => terminal.turn ?? 0, host: null }, folder: core.root, answer: (answer) => answers.push(answer), server: ovisServer(null) });
     const run = async (action: RunEffect["action"], target: Target | null = null, more: Partial<RunEffect> = {}) => {
       await writes.run({ type: "run", action, target, index: null, name: null, ...more });
     };

@@ -3,12 +3,13 @@ import { existsSync, mkdtempSync, rmSync, writeFileSync } from "node:fs";
 import { constants, tmpdir } from "node:os";
 import { join } from "node:path";
 import { buildBinary } from "../scripts/server-artifact.ts";
-import { coreFolder } from "../scripts/test-hc.ts";
+import { coreFolder, IsolatedCore, stoppedCleanly } from "../scripts/test-hc.ts";
 import { FakeHcCore } from "../server/herdr-core/core.fake.ts";
 import { PANE_NAME_LABEL, SPACE_LABEL, TAB_LABEL } from "../server/herdr-core/snapshot.ts";
 import { DETACH, entryEnv, entryPty, fresh, RESTORE, SOURCE_OVIS, visibleGrid } from "./testing/entry-pty.ts";
 import { stopAllPtyRuns, type SupervisedRun } from "./testing/pty.ts";
 
+const bin = process.env["OVIS_TEST_HC_BIN"];
 const evidence = process.env["OVIS_TEST_ENTRY_GRIDS"] === "1";
 const unsupported = process.platform === "win32" || (process.arch !== "x64" && process.arch !== "arm64");
 const labels = { [SPACE_LABEL]: "entry", [TAB_LABEL]: "one" };
@@ -105,6 +106,45 @@ exit 3
       await show(run, `${build} no core n: ${command().join(" ")}`, 80, 24);
       await run.exited;
       await clean();
+    }, WAIT_MS);
+
+    it(`${build}: without a running core, bare ovis does exactly what status does on the same PTY`, async () => {
+      const folder = coreFolder();
+      cleanup.push(async () => { rmSync(folder.root, { recursive: true, force: true }); });
+      const env = entryEnv(folder);
+      const status = entryPty(command(["status"]), env, 80, 24);
+      const expected = await status.ended;
+      expect(status.output()).toContain("http://127.0.0.1:1");
+      for (const entry of [
+        command([]),
+        command(["--session", "work"]),
+        ["/bin/sh", "-c", 'exec "$@" </dev/null', "input", ...command([])],
+        ["/bin/bash", "-o", "pipefail", "-c", '"$@" | /bin/cat', "output", ...command([])],
+      ]) {
+        const bare = entryPty(entry, env, 80, 24);
+        const end = await bare.ended;
+        expect({ code: end.code, stderr: end.stderr, stdout: bare.output() }).toEqual({
+          code: expected.code, stderr: expected.stderr, stdout: status.output(),
+        });
+      }
+    }, WAIT_MS);
+
+    if (bin) it(`${build}: bare ovis joins a real core and detaches without stopping it`, async () => {
+      const core = new IsolatedCore(bin);
+      const clean = async () => { expect(stoppedCleanly(await core.stop())).toBe(true); };
+      cleanup.push(clean);
+      await core.start();
+      const run = entryPty(command([]), entryEnv(core, bin), 80, 24);
+      for (;;) {
+        const seen = run.output().length;
+        if ((await visibleGrid(run, 80, 24)).split("\n").some((row) => row.startsWith(" · ~ "))) break;
+        await run.until(new RegExp(`^[\\s\\S]{${seen + 1}}`), "the first workspace in the sidebar");
+      }
+      expect(run.output()).not.toContain("[Y/n]");
+      await show(run, `${build} bare: ${command([]).join(" ")}`, 80, 24);
+      run.type(DETACH);
+      await expectRestored(run, 0);
+      expect(existsSync(core.socket)).toBe(true);
     }, WAIT_MS);
 
     for (const cols of [45, 60, 64, 65]) it(`${build}: ${cols} columns projects the saved split without writing layout`, async () => {

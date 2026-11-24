@@ -10,6 +10,7 @@
  * only that data. A part's `version` is that data, so a part is drawn again exactly when something it shows changed.
  */
 
+import { defaultCheckoutPath } from "../../server/herdr-core/worktrees.ts";
 import { knownStatus, type KnownStatus } from "../../shared/attention.ts";
 import type { PaneView } from "../core/pane.ts";
 import type { CoreView } from "../core/world.ts";
@@ -865,6 +866,59 @@ function fieldOverlay(width: number, height: number, title: string, field: Field
   return { overlay, input: { col: rect.x + 2 + view.cursor, row: rect.y + 3 } };
 }
 
+/**
+ * herdr's New worktree (R7): the branch to make (herdr's suggestion, edited in place) and the folder the checkout goes to
+ * (`<home>/.herdr/worktrees/<repository>/<branch, slashes as dashes>`, the server's own default), then create and open.
+ */
+function newWorktreePart(width: number, height: number, field: Field, repo: string, colors: Colors): { overlay: Part; input: Scene["input"] } | null {
+  const rect = dialogRect(width, height, 68, 12);
+  if (!rect) return null;
+  const room = Math.max(1, rect.width - 3);
+  const view = fieldView(field, room);
+  const overlay: Part = {
+    key: "overlay:text", rect, version: 0,
+    draw(canvas) {
+      const inner = panel(canvas, rect, colors.accent, colors);
+      if (inner.width <= 0 || inner.height <= 0) return;
+      const style = (fg: WrittenColor, flags = 0, bg: WrittenColor = colors.bgPanel) => canvas.style({ fg, bg, flags });
+      printFit(canvas, inner.x, inner.y, STRINGS.newWorktreeTitle, inner.width, style(colors.text, STYLE_BOLD));
+      printFit(canvas, inner.x, inner.y + 2, ` ${STRINGS.newWorktreeBranch}`, inner.width, style(colors.textDim));
+      fillSpan(canvas, inner.x, inner.y + 3, inner.width, style(colors.text, 0, colors.bgHover));
+      printFit(canvas, inner.x + 1, inner.y + 3, view.text, inner.width - 1, style(colors.text, 0, colors.bgHover));
+      printFit(canvas, inner.x, inner.y + 5, ` ${STRINGS.newWorktreeCheckout}`, inner.width, style(colors.textDim));
+      printFit(canvas, inner.x, inner.y + 6, ` ${defaultCheckoutPath(repo, field.graphemes.join(""))}`, inner.width, style(colors.text));
+      drawButtons(canvas, inner, [
+        { text: STRINGS.newWorktreeButton, width: 20, main: "accent", hit: "accept" },
+        { text: STRINGS.cancelButton, width: 12, main: null, hit: "close" },
+      ], 9, colors);
+    },
+  };
+  return { overlay, input: { col: rect.x + 2 + view.cursor, row: rect.y + 4 } };
+}
+
+/** herdr's Delete worktree checkout... (R7): the folder that goes, and what stays, before anything is removed. */
+function removeWorktreePart(width: number, height: number, path: string, colors: Colors): Part | null {
+  const rect = dialogRect(width, height, 72, 10);
+  // Both the question and the checkout row must fit inside the border.
+  if (!rect || rect.height < 5 || rect.width < widthOf(` ${STRINGS.removeWorktreeTitle}`) + 2) return null;
+  return {
+    key: "overlay:confirm", rect, version: 0,
+    draw(canvas) {
+      const inner = panel(canvas, rect, colors.statusBlocked, colors);
+      if (inner.width <= 0 || inner.height <= 0) return;
+      const style = (fg: WrittenColor, flags = 0) => canvas.style({ fg, bg: colors.bgPanel, flags });
+      printFit(canvas, inner.x, inner.y, ` ${STRINGS.removeWorktreeTitle}`, inner.width, style(colors.statusBlocked, STYLE_BOLD));
+      printFit(canvas, inner.x, inner.y + 1, ` ${STRINGS.removeWorktreeFolder}`, inner.width, style(colors.text));
+      printFit(canvas, inner.x, inner.y + 2, ` ${path}`, inner.width, style(colors.text));
+      printFit(canvas, inner.x, inner.y + 3, ` ${STRINGS.removeWorktreeKept}`, inner.width, style(colors.text));
+      drawButtons(canvas, inner, [
+        { text: STRINGS.removeWorktreeButton, width: 18, main: "danger", hit: "accept" },
+        { text: STRINGS.cancelButton, width: 12, main: null, hit: "close" },
+      ], 7, colors);
+    },
+  };
+}
+
 /** The copy feedback: a three-row box at the bottom centre of the panes, its mark and the notice in it. */
 function copyToastPart(panes: Rect, text: string, colors: Colors): Part | null {
   const line = `${STRINGS.toastMark} ${text}`;
@@ -995,6 +1049,10 @@ function buildOverlays(input: ChromeInput, colors: Colors): { overlays: Part[]; 
       return { overlays: help ? [...overlays, help.overlay] : overlays, input: help?.input ?? "overlay", dim: true };
     }
     case "text": {
+      if (top.purpose === "create_worktree") {
+        const made = newWorktreePart(width, height, top.field, top.repo ?? "", colors);
+        return { overlays: made ? [...overlays, made.overlay] : overlays, input: made?.input ?? "overlay", dim: true };
+      }
       const title = top.purpose === "rename_workspace" ? STRINGS.textRenameWorkspace
         : top.purpose === "rename_tab" ? STRINGS.textRenameTab
           : top.purpose === "rename_pane" ? STRINGS.textRenamePane
@@ -1003,6 +1061,11 @@ function buildOverlays(input: ChromeInput, colors: Colors): { overlays: Part[]; 
       return { overlays: field ? [...overlays, field.overlay] : overlays, input: field?.input ?? "overlay", dim: true };
     }
     case "confirm": {
+      if (top.purpose === "remove_worktree") {
+        const checkout = top.worktree?.checkout;
+        const asked = checkout ? removeWorktreePart(width, height, checkout.path, colors) : null;
+        return { overlays: asked ? [...overlays, asked] : overlays, input: "overlay", dim: true };
+      }
       const rect = dialogRect(width, height, 64, 6);
       if (!rect) return { overlays, input: "overlay", dim: true };
       const workspace = state.world.workspaces.find((one) => one.id === top.target.id);

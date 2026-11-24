@@ -4,7 +4,7 @@ This table gives the answer for each of the 41 clusters of r/herdr posts about t
 
 | # | Cluster (short) | Disposition | Answer |
 | --- | --- | --- | --- |
-| 1 | no TUI client for core | TUI-SOLVES | a terminal screen on herdr-core (`tui/`) |
+| 1 | no TUI client for core | TUI-SOLVES | bare `ovis` at a terminal opens the screen on herdr-core |
 | 2 | no restore after reboot | NEEDS-ENGINE | not the screen's job; a kept terminal waiting for its new shell says so |
 | 3 | app feature-poor, mods as band-aid | TUI-HELPS | the basics are built-in keys, herdr's menu and its right-click menus |
 | 4 | TUI seen as abandoned | NOT-OURS | the screen is a maintained terminal client on the core API |
@@ -28,7 +28,7 @@ This table gives the answer for each of the 41 clusters of r/herdr posts about t
 | 22 | naming of tabs and panes | TUI-HELPS | rename workspaces, tabs and panes in place, by key or right-click menu |
 | 23 | distrust of direction | NOT-OURS | nothing in the screen |
 | 24 | keyboard scroll, copy mode, search | TUI-HELPS | copy mode with vim keys and search in one pane |
-| 25 | multi-repo and bare worktrees | TUI-HELPS | `Open worktree...` lists a repository's checkouts and the sidebar groups worktree workspaces under their repository; making or deleting a checkout runs git and is left to the browser |
+| 25 | multi-repo and bare worktrees | TUI-HELPS | `Open worktree...` lists a repository's checkouts and the sidebar groups worktree workspaces under their repository; New worktree and Delete worktree checkout... are done by the Ovis server, which runs git |
 | 26 | stability and compatibility | NEEDS-ENGINE | an "herdr-core is not answering" state; the screen never kills or restarts the core |
 | 27 | no migration TUI to core | TUI-HELPS | not in the screen: Ovis's web UI has "Move everything to herdr-core" |
 | 28 | OpenCode state tracking | NEEDS-ENGINE | state comes from the engine only |

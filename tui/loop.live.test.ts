@@ -8,7 +8,7 @@ import { HcConnection } from "../server/herdr-core/connection.ts";
 import { OVIS_LAYOUT_DOC } from "../server/herdr-core/layout-doc.ts";
 import { SPACE_LABEL, TAB_LABEL, WORKSPACE_NAME_LABEL } from "../server/herdr-core/snapshot.ts";
 import { connectCoreSocket } from "../server/herdr-core/socket-transport.ts";
-import { SCREEN_FOLDER } from "./start.ts";
+import { SCREEN_FOLDER, SCREEN_SERVER } from "./start.ts";
 import { gridText, runSupervised, stopAllPtyRuns, type SupervisedRun } from "./testing/pty.ts";
 
 /**
@@ -150,11 +150,12 @@ describe.skipIf(!bin || process.platform === "win32")("the screen's entry agains
   }
 
   /** The entry on a pty of its own, in the core's environment, answering the probe as a terminal does. */
-  function screen(isolated: IsolatedCore, root: string, options: { socket?: string; answerDa1?: boolean; folder?: string } = {}): SupervisedRun {
+  function screen(isolated: IsolatedCore, root: string, options: { socket?: string; answerDa1?: boolean; folder?: string; server?: string } = {}): SupervisedRun {
     const env = {
       ...isolated.env, TERM: "xterm-256color", COLORTERM: "truecolor", OVIS_TUI_STATE_DIR: join(root, "tui-state"), TMPDIR: root,
       ...(options.socket ? { HC_SOCKET: options.socket } : {}),
       ...(options.folder ? { [SCREEN_FOLDER]: options.folder } : {}),
+      ...(options.server ? { [SCREEN_SERVER]: options.server } : {}),
     };
     const answers = options.answerDa1 === false ? ANSWERS.filter(([query]) => query !== DA1) : ANSWERS;
     let tail = "";
@@ -397,6 +398,96 @@ describe.skipIf(!bin || process.platform === "win32")("the screen's entry agains
     await waitFor(back, "STOP-MARK", "the screen repainted");
     run.type(DETACH);
     expect((await run.ended).code).toBe(0);
+  }, TEST_MS);
+
+  it("New worktree and Delete worktree checkout... through a scratch Ovis server: the screen's entries make and remove the checkout, grouped as the web's", async () => {
+    const { core: isolated, hc, root } = await core();
+    const repo = join(root, "repo");
+    mkdirSync(repo);
+    const git = async (...args: string[]) => {
+      const child = Bun.spawn(["git", "-c", "gc.auto=0", "-c", "user.email=t@t", "-c", "user.name=t", ...args], { cwd: repo, env: { PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: root, GIT_CONFIG_NOSYSTEM: "1", GIT_MASTER: "1" }, stdin: "ignore", stdout: "pipe", stderr: "pipe" });
+      const [out, err, code] = await Promise.all([new Response(child.stdout).text(), new Response(child.stderr).text(), child.exited]);
+      if (code !== 0) throw new Error(`git ${args.join(" ")} failed: ${err}`);
+      return out;
+    };
+    await git("init", "-q", "-b", "main");
+    await Bun.write(join(repo, "a"), "a");
+    await git("add", "a");
+    await git("commit", "-q", "-m", "a");
+    await hc.call("terminal.run", { argv: ["sh", "-c", "echo REPO-MARK; exec sh"], labels: { [SPACE_LABEL]: "w-repo", [TAB_LABEL]: "t-repo" }, cwd: repo });
+    // Ovis binds its own ephemeral port atomically and prints the bound origin when ready.
+    const server = Bun.spawn([process.execPath, "server/index.ts"], {
+      cwd: join(import.meta.dir, ".."),
+      env: { ...isolated.env, PATH: process.env["PATH"] ?? "/usr/bin:/bin", HOME: root, HOST: "127.0.0.1", PORT: "0", OVIS_STATE_DIR: join(root, "ovis-state"), OVIS_RUNTIME: "herdr-core", OVIS_HC_BIN: bin!, TMPDIR: root, HERDR_TEST_MODE: "unit" },
+      stdin: "ignore", stdout: "pipe", stderr: "inherit",
+    });
+    const output = server.stdout.getReader();
+    let drain: Promise<void> | undefined;
+    try {
+      let origin: string | undefined;
+      const decoder = new TextDecoder();
+      let startup = "";
+      for (let part = await output.read(); !part.done; part = await output.read()) {
+        startup += decoder.decode(part.value, { stream: true });
+        origin = /^Ovis listening on (http:\/\/127\.0\.0\.1:[1-9]\d*)\r?$/m.exec(startup)?.[1];
+        if (origin !== undefined) break;
+      }
+      if (origin === undefined) throw new Error(`scratch Ovis did not report a listening port:\n${startup}`);
+      drain = (async () => { while (!(await output.read()).done) { /* discard subsequent logs */ } })();
+      const run = screen(isolated, root, { server: origin });
+      await run.until(/REPO-MARK[\s\S]*\x1b\[\?25h/, "the repository's pane");
+      // the screen as read up to `seen` bytes, and a wait for output past exactly those: what arrived while the grid was
+      // being read is not missed
+      const settled = async (until: (rows: string[]) => boolean, what: string): Promise<string[]> => {
+        for (;;) {
+          const seen = run.output().length;
+          const rows = (await gridText(run.output().slice(0, seen), 100, 30)).split("\n");
+          if (until(rows)) return rows;
+          await run.until(new RegExp(`^[\\s\\S]{${seen + 1}}`), what);
+        }
+      };
+      // `width`: only so many columns from the left (the sidebar's 26: a pane's corner draws └─ too)
+      const at = async (text: string, width = 100): Promise<{ x: number; y: number }> => {
+        const rows = await settled((lines) => lines.some((line) => line.slice(0, width).includes(text)), text);
+        const y = rows.findIndex((line) => line.slice(0, width).includes(text));
+        return { x: rows[y]!.indexOf(text), y };
+      };
+      const press = (button: 0 | 2, cell: { x: number; y: number }) => run.type(`\x1b[<${button};${cell.x + 2};${cell.y + 1}M\x1b[<${button};${cell.x + 2};${cell.y + 1}m`);
+      // New worktree on the repository's row, Enter on herdr's suggested branch
+      press(2, await at(" repo"));
+      press(0, await at("New worktree"));
+      await at("create and open");
+      run.type("\r");
+      // the sidebar's grouped row itself: the dialog's lower left corner reads └─ too while it closes
+      const grouped = await at("└─ · worktree-", 26);
+      type Session = { snapshot: { workspaces: { workspace_id: string; label: string; worktree?: { is_linked_worktree: boolean; repo_name: string; checkout_path: string } | null }[] } };
+      // the web's session follows the core's events a moment behind the screen: read it until it has the new workspace
+      const linked = async () => ((await (await fetch(`${origin}/api/session`)).json()) as Session).snapshot.workspaces.find((workspace) => workspace.worktree?.is_linked_worktree);
+      let made = await linked();
+      for (let tries = 0; tries < 100 && !made; tries++) {
+        await Bun.sleep(20);
+        made = await linked();
+      }
+      // what the web reads: the new workspace carries the worktree's facts, of the same repository as the one it came from
+      expect(made?.worktree?.repo_name).toBe("repo");
+      expect(made?.label.startsWith("worktree-")).toBe(true);
+      expect(await git("worktree", "list")).toContain(made!.worktree!.checkout_path);
+      // Delete worktree checkout... on the grouped row: asked first, then removed with its workspace
+      // on its name: the tree's lines are no part of the row's hit, as in herdr's (parity's rc-workspace-worktree presses there too)
+      press(2, { x: grouped.x + 5, y: grouped.y });
+      press(0, await at("Delete worktree checkout..."));
+      await at("delete worktree checkout?");
+      run.type("\r");
+      await settled((lines) => !lines.some((line) => line.slice(0, 26).includes("└─ · worktree-") || line.includes("delete worktree checkout?")), "the worktree gone");
+      expect(await git("worktree", "list")).not.toContain(made!.worktree!.checkout_path);
+      run.type(DETACH);
+      expect((await run.ended).code).toBe(0);
+    } finally {
+      if (server.exitCode === null && server.signalCode === null) server.kill();
+      await server.exited;
+      await drain;
+      output.releaseLock();
+    }
   }, TEST_MS);
 
   it("shows a program named like an agent coming to the front as that agent in the sidebar's agents, with no reconnect", async () => {

@@ -376,31 +376,6 @@ export function compare(herdr: Cells, ovis: Cells, palette: PaletteName, decisio
   return { differences: out, compared };
 }
 
-/**
- * The scenes whose herdr menu holds entries the screen leaves out (R7): from the first of them (`from`) to the menu's
- * bottom both pictures differ, or the whole box when the screen's is narrower without them (`whole`).
- */
-const LEFT_OUT_ENTRIES: Readonly<Record<string, { readonly from: string; readonly whole: boolean }>> = {
-  "rc-workspace-git": { from: "New worktree", whole: false },
-  "rc-workspace-group": { from: "New worktree", whole: false },
-  "rc-workspace-worktree": { from: "Delete worktree checkout...", whole: true },
-};
-
-/** herdr's right-click menu box and the rows of it from the entry `from` on (all of it with `whole`), with the row under it. */
-function leftOutRows(herdr: Cells, from: string, whole: boolean): Hole | null {
-  const text = gridText(herdr);
-  const y = text.findIndex((line) => line.includes(`│${from}`));
-  if (y < 0) return null;
-  const x = text[y]!.indexOf(`│${from}`);
-  let top = y;
-  while (top > 0 && text[top]![x] !== "┌") top--;
-  let bottom = y;
-  while (bottom < text.length - 1 && text[bottom]![x] !== "└") bottom++;
-  const width = text[top]!.indexOf("┐", x) - x + 1;
-  const first = whole ? top : y;
-  return { line: "R7", x, y: first, width, height: bottom - first + 2 };
-}
-
 const SIDEBAR = 26;
 /** The backgrounds herdr's sidebar writes: none, the row in front and the row a navigate points at. */
 const SIDEBAR_BACKGROUNDS = new Set([null, "#1e1e2e", "#313244"]);
@@ -432,6 +407,7 @@ const BAR_SCENES = new Set(["prefix", "navigate", "copy", "resize", "empty-prefi
 const DIALOGS: Readonly<Record<string, readonly [number, number]>> = {
   help: [76, 22], rename: [56, 7], newtab: [56, 7], confirm: [64, 6], picker: [999, 999], "agents-picker": [999, 999],
   "rc-rename-pane": [56, 7], "rc-rename-workspace": [56, 7], "rc-close-workspace": [64, 6], "rc-close-group": [64, 6], "rc-open-worktree": [96, 12],
+  "rc-new-worktree": [68, 12], "rc-delete-worktree": [72, 10],
 };
 
 /**
@@ -539,24 +515,18 @@ export function decisionsFor(world: WorldName, scene: string, cols: number, rows
   // R4: herdr's name dialogs say `rename pane` and `rename workspace`; the screen keeps its words (C2)
   if (scene === "rc-rename-pane") words.push({ herdr: "rename pane", ovis: STRINGS.textRenamePane });
   if (scene === "rc-rename-workspace") words.push({ herdr: "rename workspace", ovis: STRINGS.textRenameWorkspace });
-  // R7: herdr's worktree entries that run git are left out of the screen's menus (docs/tui/parity.md)
-  const leftOut = LEFT_OUT_ENTRIES[scene];
-  if (leftOut) {
-    const hole = leftOutRows(herdr, leftOut.from, leftOut.whole);
-    if (hole) {
-      holes.push(hole);
-      ovisHoles.push(hole);
-    }
-  }
-  // R7: each checkout's folder in Open worktree... is the scratch folder of the run that made it
-  if (scene === "rc-open-worktree") {
+  // R7: each checkout's folder in Open worktree..., New worktree and Delete worktree checkout... is the scratch folder of
+  // the run that made it, and New worktree's branch is drawn at random (herdr's words, the web's helper)
+  if (scene === "rc-open-worktree" || scene === "rc-new-worktree" || scene === "rc-delete-worktree") {
     for (const grid of [herdr, ovis]) {
       gridText(grid).forEach((text, y) => {
-        const at = text.indexOf("│ /");
+        const at = Math.max(text.indexOf("│ /"), text.indexOf("│ worktree/"));
         if (at >= 0) (grid === herdr ? holes : ovisHoles).push({ line: "R7", x: at + 1, y, width: text.lastIndexOf("│") - at - 1, height: 1 });
       });
     }
   }
+  // R7: herdr's question names its own product; the screen says "The workspace will close." (C2)
+  if (scene === "rc-delete-worktree") words.push({ herdr: "The Herdr workspace will close.", ovis: STRINGS.removeWorktreeKept.slice(STRINGS.removeWorktreeKept.indexOf("The workspace")) });
   if (scene === "menu" || scene === "agents-menu") words.push({ herdr: "keybinds", ovis: STRINGS.menuEntries.help.padEnd("keybinds".length) });
   if (scene === "toast-agent") {
     // N2: the agent scenes were captured with herdr's toasts switched on (`ui.toast.delivery = "herdr"`); the screen

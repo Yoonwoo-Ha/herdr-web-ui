@@ -210,6 +210,8 @@ export const SCENES: Readonly<Record<WorldName, readonly Scene[]>> = {
     { id: "rc-rename-workspace", ...both(steps(rclick("bots", 0, 3), click("Rename"))) },
     { id: "rc-close-workspace", ...both(steps(rclick("bots", 0, 3), click("Close"))) },
     { id: "rc-open-worktree", ...both(steps(rclick("repo", 0, 4), click("Open worktree..."))) },
+    { id: "rc-new-worktree", ...both(steps(rclick("repo", 0, 4), click("New worktree"))) },
+    { id: "rc-delete-worktree", ...both(steps(GROUPED, rclick("└─", 5), click("Delete worktree checkout..."))) },
     // Enter on the linked worktree's checkout in Open worktree... goes to its workspace and groups it under the repository's
     // (R7): herdr keeps the group from here on, so on herdr each scene below starts where the one before it ended, and on
     // the screen from the world's start

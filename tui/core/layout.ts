@@ -16,11 +16,13 @@ import { foreignLayout, leaves, OVIS_LAYOUT_DOC, OVIS_LAYOUT_SCHEMA, type PaneDi
 import { type CloseTarget, collapseEdit, layoutCalls, LayoutStore, type LayoutView, newLayoutId, ownsLayout, passthroughEdit, readCore, RESIZE_STEP, resizeEdit, swapEdit, TERMINAL_COLOUR, zoomEdit } from "../../server/herdr-core/layout-ops.ts";
 import { FIRST_CLAIM_MS } from "../model/deadlines.ts";
 import { type CoreHost, type FirstTurn, LAYOUT_DOC, OTHER_WORKSPACE_ID } from "../../server/herdr-core/snapshot.ts";
-import { checkoutHolding, factsOf, type Repository, WORKTREE_LABEL, worktreeFolder, worktreeLabel } from "../../server/herdr-core/worktrees.ts";
+import { checkoutHolding, factsOf, gitDirIdentity, type Repository, WORKTREE_LABEL, worktreeFolder, worktreeLabel } from "../../server/herdr-core/worktrees.ts";
 import type { CheckoutRow } from "../model/overlays.ts";
 import { checkoutTop, repositoryFiles } from "./git-head.ts";
+import type { OvisServer } from "./ovis-server.ts";
+import { suggestWorktreeBranch } from "../../shared/worktree-name.ts";
 import { errorCode } from "../crash.ts";
-import type { RunEffect, Seen } from "../model/effects.ts";
+import type { RunEffect, Seen, WorktreeTarget } from "../model/effects.ts";
 import type { Target } from "../model/focus.ts";
 
 /** What a layout write tells the screen: a notice (`calm` when it reports how things are, not a failure), or a pane to focus once shown. */
@@ -28,7 +30,11 @@ export type LayoutAnswer =
   | { readonly type: "notice"; readonly code: string; readonly data: Readonly<Record<string, string>>; readonly calm?: true }
   | { readonly type: "follow"; readonly target: Target; readonly away: string | null }
   /** a repository's checkouts, read for Open worktree... */
-  | { readonly type: "worktrees"; readonly target: Target; readonly checkouts: readonly CheckoutRow[] };
+  | { readonly type: "worktrees"; readonly target: Target; readonly checkouts: readonly CheckoutRow[] }
+  /** New worktree's dialog: the repository's name and the branch to start with */
+  | { readonly type: "new_worktree"; readonly target: Target; readonly repo: string; readonly branch: string; readonly worktree: WorktreeTarget }
+  /** Delete worktree checkout...'s question: the checkout's folder */
+  | { readonly type: "remove_worktree"; readonly target: Target; readonly worktree: WorktreeTarget };
 
 /** What a layout write did that the screen is still to show: the terminals a close ended (none for any other write). */
 export interface LayoutDone {
@@ -67,6 +73,8 @@ interface LayoutWritesOptions {
    */
   wall?: (() => number) | undefined;
   answer: (answer: LayoutAnswer) => void;
+  /** the Ovis server, for herdr's New worktree and Delete worktree checkout... (git runs there) */
+  server: OvisServer;
 }
 
 /** What herdr names the first workspace its server opens in its own home; a workspace in any other folder is named after it. */
@@ -325,6 +333,29 @@ export class LayoutWrites {
       return async () => this.unchanged(action, await store.edit(collapseEdit(id, on)));
     }
     if (action === "list_worktrees") return () => this.listWorktrees(id);
+    if (action === "prepare_worktree") return () => this.prepareWorktree(id);
+    if (action === "prepare_remove") return () => this.prepareRemove(id);
+    if (action === "create_worktree" && effect.name) {
+      const branch = effect.name;
+      return async () => {
+        if (!effect.worktree || (await this.options.hc.hello()).core.id !== effect.worktree.core) return;
+        const made = await this.options.server.createWorktree(id, branch, effect.worktree);
+        if (made.ok) return this.follow(made.value.pane, null);
+        this.serverRefused("new_worktree", made);
+        if (made.code === "no_server") return { ended: [], dropInput: "layout_unknown" };
+      };
+    }
+    if (action === "remove_worktree") {
+      return async () => {
+        if (!effect.worktree?.checkout || (await this.options.hc.hello()).core.id !== effect.worktree.core) return;
+        const { shown } = (await this.fresh()).view;
+        const ended = shown.panes.filter((pane) => pane.workspace_id === id).map((pane) => pane.pane_id);
+        const removed = await this.options.server.removeWorktree(id, effect.worktree);
+        if (removed.ok) return { ended };
+        this.serverRefused("delete_checkout", removed);
+        if (removed.code === "no_server") return { ended: [], dropInput: "layout_unknown" };
+      };
+    }
     if (action === "open_checkout" && effect.path !== undefined) {
       const path = effect.path;
       return () => this.openCheckout(path);
@@ -398,6 +429,43 @@ export class LayoutWrites {
       open: open.get(checkout.path) ?? null,
     }));
     this.options.answer({ type: "worktrees", target: { kind: "workspace", id: workspace }, checkouts });
+  }
+
+  /** New worktree's dialog: the repository the workspace is on (git's files), and the branch herdr's form starts with. */
+  private async prepareWorktree(workspace: string): Promise<void> {
+    const { core } = await this.options.hc.hello();
+    const { shown } = (await this.fresh()).view;
+    const repository = this.repositoryOfWorkspace(shown, workspace);
+    if (repository === null) {
+      this.notice("not_git_worktree", { action: "new_worktree" });
+      return;
+    }
+    this.options.answer({ type: "new_worktree", target: { kind: "workspace", id: workspace }, repo: repository.repo_name, branch: suggestWorktreeBranch(), worktree: { core: core.id, repository: repository.repo_key } });
+  }
+
+  /** Delete worktree checkout...'s question names the folder the facts of the worktree's workspace name. */
+  private async prepareRemove(workspace: string): Promise<void> {
+    const { core } = await this.options.hc.hello();
+    const { shown } = (await this.fresh()).view;
+    const facts = shown.workspaces.find((candidate) => candidate.workspace_id === workspace)?.worktree;
+    if (!facts?.is_linked_worktree) {
+      this.notice("not_linked_worktree", { action: "delete_checkout" });
+      return;
+    }
+    const repo = repositoryFiles(facts.checkout_path);
+    const gitId = repo && repo.checkout === facts.checkout_path && repo.repo_key === facts.repo_key ? gitDirIdentity(repo.git_dir) : null;
+    if (gitId === null) {
+      this.serverRefused("delete_checkout", { code: "worktree_target_changed", message: "The checkout could not be identified" });
+      return;
+    }
+    this.options.answer({ type: "remove_worktree", target: { kind: "workspace", id: workspace }, worktree: { core: core.id, repository: facts.repo_key, checkout: { path: facts.checkout_path, gitId } } });
+  }
+
+  /** What the Ovis server said instead: none answered (start it with `ovis start`), or its refusal in its own words. */
+  private serverRefused(action: string, answer: { readonly code: string; readonly message: string }): void {
+    if (answer.code === "no_server") this.notice("ovis_server_none", { action }, true);
+    else if (answer.code === "server_not_loopback") this.notice("ovis_server_address", { action }, true);
+    else this.notice("ovis_server_refused", { action, code: answer.code, message: answer.message });
   }
 
   /**

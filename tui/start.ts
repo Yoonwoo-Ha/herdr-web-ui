@@ -64,6 +64,12 @@ export function insideOwnCore(env: Env, target: string, envCore: string, same: (
 /** Where `ovis tui` hands the screen the folder it was typed in: the screen itself runs in the install's folder. */
 export const SCREEN_FOLDER = "OVIS_TUI_CWD";
 
+/**
+ * Where `ovis tui` hands the screen the Ovis server's address (as `ovis status` reaches it over TCP), for the entries that
+ * only the server does (herdr's New worktree and Delete worktree checkout...). No token goes with it: the screen holds none.
+ */
+export const SCREEN_SERVER = "OVIS_TUI_SERVER";
+
 /** The folder a new workspace starts in, the first one too: the one the launcher names, else the screen's own working folder. */
 export function screenFolder(env: Env, cwd: string): string {
   return env[SCREEN_FOLDER] || cwd;

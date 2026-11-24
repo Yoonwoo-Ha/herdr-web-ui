@@ -6,6 +6,7 @@ import { MENU_ENTRIES } from "../model/menu.ts";
 import { initialState, type ModelEvent, type ModelState, reduce } from "../model/reduce.ts";
 import { agents } from "../testing/fixtures/agents.ts";
 import { demo } from "../testing/fixtures/demo.ts";
+import { keyBytes } from "../testing/keys.ts";
 import { Run } from "../testing/run.ts";
 
 const TEST_MS = 120_000;
@@ -91,6 +92,28 @@ describe("the screen at widths 45, 64 and 65: herdr's narrow layout at 64 column
     await run.keys("click@24:39");
     await run.advance(10);
     expect([run.loop.report().mode.overlays, run.loop.model().sidebarCollapsed]).toEqual([[], true]);
+  }, TEST_MS);
+
+  it.each([false, true])("a core refresh before the next frame preserves a switcher click only when its rows are unchanged (moved=%s)", async (moved) => {
+    const run = await Run.start({ fixture: agents, cols: 60, rows: 30 });
+    runs.push(run);
+    await run.live();
+    await run.keys("ctrl+b,w");
+    let row = 0;
+    for (let i = 0; row === 0 && i < 40; i++) {
+      await run.advance(1);
+      row = run.grid().findIndex((line) => line.trim() === "Agents") + 1;
+    }
+    expect(row).toBeGreaterThan(0);
+    const world = run.loop.model().world;
+    const agent = world.agents?.[0];
+    if (!agent) throw new Error("the switcher must show the fixture's first agent");
+    const passes = run.loop.report().passes;
+    run.loop.dispatch({ type: "world", world: moved ? { ...world, agents: world.agents?.slice(1) } : { ...world }, at: run.clock.current });
+    expect(run.loop.report().passes).toBe(passes);
+    run.type(keyBytes(`click@10:${row}`));
+    expect(run.loop.model().overlays.at(-1)?.kind).toBe(moved ? "switcher" : undefined);
+    if (!moved) expect(run.loop.model().focus.panes["t-agents"]).toBe(agent);
   }, TEST_MS);
 });
 

@@ -12,6 +12,7 @@
  * into OVIS_TUI_STATE_DIR. Exit code 2 for a wrong call. Nothing here waits for real time but the socket's own turns.
  */
 
+import type { OvisServer } from "../core/ovis-server.ts";
 import { mkdtempSync, rmSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
@@ -101,6 +102,8 @@ export interface RunOptions {
   home?: string;
   /** the wall clock the screen reads (the loop's `wall`); unset: the run's own clock, so no test waits on real time */
   wall?: () => number;
+  /** the Ovis server the launcher named (the loop's `server`) */
+  server?: OvisServer;
 }
 
 export class Run {
@@ -122,7 +125,7 @@ export class Run {
     readonly folder: string,
     readonly socket: string,
     views: ViewStore | undefined,
-    where: Pick<RunOptions, "cwd" | "home" | "wall"> = {},
+    where: Pick<RunOptions, "cwd" | "home" | "wall" | "server"> = {},
   ) {
     this.nextBeat = HEARTBEAT_MS;
     this.loop = startLoop({ host, clock, socket, keys: undefined, connect: (path) => this.connect(path), ...(views ? { views } : {}), ...where, wall: where.wall ?? (() => clock.now()) });
@@ -137,7 +140,7 @@ export class Run {
     const folder = mkdtempSync(join(process.env["TMPDIR"] || tmpdir(), "run-"));
     const socket = join(folder, "hc.sock");
     const host = new HeadlessHost({ cols: options.cols ?? 120, rows: options.rows ?? 40, colorTerm: options.colorTerm ?? "truecolor", answer: (options.answerFirst ?? "") + PROBE_ANSWER });
-    const run = new Run(core, host, new ManualClock(), folder, socket, options.views, { cwd: options.cwd, home: options.home, wall: options.wall });
+    const run = new Run(core, host, new ManualClock(), folder, socket, options.views, { cwd: options.cwd, home: options.home, wall: options.wall, server: options.server });
     try {
       await run.listen();
       await run.settle();

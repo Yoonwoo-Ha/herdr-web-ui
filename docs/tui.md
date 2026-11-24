@@ -3,8 +3,8 @@
 `ovis tui` shows herdr-core's terminals in the terminal you type it in, laid out the way herdr
 shows its own: a sidebar of workspaces and agents with their state, tabs, split panes, and herdr's
 keys from your herdr config. It's part of Ovis, so there's nothing else to install or build. It
-talks to [herdr-core](https://herdr.dev/core) alone: it works without the Ovis server and never
-needs an Ovis token. It runs on Linux and macOS.
+talks to [herdr-core](https://herdr.dev/core). It works without the Ovis server except for creating
+and deleting worktree checkouts, and never needs an Ovis token. It runs on Linux and macOS.
 
 Coming from herdr's own screen? herdr's session lives in herdr's server, which this screen doesn't
 show. Ovis's web UI can move it over: **Settings → About → Terminals → Move everything to
@@ -19,8 +19,12 @@ ovis tui --session work     # another herdr-core session
 ```
 
 In a checkout, run `bun scripts/plugin.ts tui`. `ovis tui --help` prints the usage and
-`ovis tui -V` the version. Plain `ovis` doesn't open the screen: at a terminal it prints the help,
-and in a script or a pipe it is `ovis status`.
+`ovis tui -V` the version.
+
+Plain `ovis` opens the same screen (`ovis --session work` too) when you type it at a terminal on a
+running herdr-core session. If that session isn't running, or either standard input or output
+isn't a terminal, it prints exactly what `ovis status` prints and exits with its code. Plain
+`ovis` never asks to start herdr-core; use `ovis tui` for that.
 
 It joins the core that `--session NAME` names, else the one `HC_SOCKET` or `HC_SESSION` names in
 your environment, else the one Ovis's settings file names (the installer writes it there), else
@@ -155,8 +159,13 @@ splits, zooms or closes it; **Send right-clicks to pane** lets the program in it
 clicks (Shift still opens the menu), and stays with the pane when you move it to another tab. A tab's menu makes a tab, renames or closes it; a workspace's
 renames or closes it. A workspace in a git checkout adds **Open worktree...**, which lists the
 repository's checkouts from git's own files and opens one (grouped under the repository); a
-repository's workspace with worktrees under it adds **Close group** and **Collapse**. herdr's
-**New worktree** and **Delete worktree checkout...** are not there: they run git.
+repository's workspace with worktrees under it adds **Close group** and **Collapse**.
+**New worktree** (on a git workspace or a repository's group) and **Delete worktree checkout...**
+(on a worktree grouped under its repository) are done by the Ovis server, as in the browser: start
+it with `ovis start`, and the launcher tells the screen where it answers on loopback. The screen
+sends no token, follows no redirect, and doesn't use a proxy. Without a reachable local server,
+the entry reports that it couldn't run. Removing a checkout closes its workspace but keeps the
+branch.
 
 ### Copying
 
@@ -235,7 +244,7 @@ running in herdr-core. Run it again and it opens where you were.
 - Windows: `ovis tui` there prints one line and exits.
 - Question cards, the readable last turn, pins, automatic tab names and the BG state: those come
   from the Ovis server. Answer an agent's question in its pane, as in herdr.
-- Floating popups, a settings screen, making or deleting a worktree checkout, edit scrollback and
+- Floating popups, a settings screen, edit scrollback and
   clear pane.
 - Terminals of other PCs: it shows this PC's herdr-core only.
 - Images: it doesn't draw Kitty graphics or sixel.

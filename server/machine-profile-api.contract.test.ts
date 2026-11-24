@@ -555,6 +555,8 @@ const walkBody = { ...ids, keys: ["Enter"], direction: "right", cols: 80, rows: 
 const OWN: Record<string, Record<string, string>> = {
   "/api/sessions/history": { agent: "claude" }, "/api/pane/find": { direction: "forward" },
   "/api/pane/move": { side: "right" },
+  "/api/worktree/create-checked": { expected_core: "c1", expected_repo: "/repo/.git" },
+  "/api/worktree/remove-checked": { expected_core: "c1", expected_repo: "/repo/.git", expected_checkout: "/checkout", expected_git_id: "1:2:3" },
 };
 const NOT_WALKED = /^(?:(?:GET|POST|PUT) \/api\/(?:usage\/login|agent-catalog\/(?:install|sign-in)|fs\/favicon|workspace\/directories|agent\/commands)|PUT \/api\/fs\/text|POST \/api\/(?:layout\/ratio|pane\/image|pane\/prompt\/answer|pane\/scroll|pane\/swap|tab\/move|workspace\/move|workspace\/pr\/merge|worktree\/create|worktree\/open|tab\/create|workspace\/create|sessions\/resume)|(?:GET|POST|PUT) \/api\/pane\/(?:selection|conversation\/image)|GET \/api\/plugin\/action)(?:$|\?|\/)/;
 
