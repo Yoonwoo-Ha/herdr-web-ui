@@ -19,7 +19,7 @@ export const LOCAL_DRIVE_POSTS: readonly string[] = [
   "pane/input", "pane/keys", "pane/find", "pane/scroll", "pane/rename", "pane/close", "pane/image",
   "pane/split", "pane/zoom", "pane/swap", "pane/move", "pane/resize", "pane/clear", "pane/focus",
   "pane/prompt/answer", "layout/ratio", "workspace/create", "workspace/rename", "workspace/close",
-  "pane/turn/cancel", "pane/turn/release",
+  "pane/turn/cancel", "pane/turn/release", "pane/turn/cancel-children",
   "workspace/move", "workspace/directories", "workspace/pr/merge", "worktree/create", "worktree/open",
   "worktree/remove", "tab/create", "tab/rename", "tab/close", "tab/move", "tab/move-to-workspace",
   "agent/rename", "sessions/resume", "plugin/action", "seen", "connection-diagnostics",

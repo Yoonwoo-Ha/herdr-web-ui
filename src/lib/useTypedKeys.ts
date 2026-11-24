@@ -8,7 +8,6 @@ import type { HerdrSocket } from "./ws.ts";
 import type { AgentStatus } from "../../shared/protocol.ts";
 
 export interface TypedKeysDeps {
-  acpChild: boolean;
   agent: string | null;
   agentStatus: AgentStatus | undefined;
   barKeyRef: RefObject<{ key: string; chord: string | null } | null>;
@@ -80,7 +79,7 @@ export function useTypedKeys(deps: TypedKeysDeps) {
     const socket = socketRef.current;
     if (!term || !socket || !socket.connected) return;
     const now = Date.now();
-    const key = deps.acpChild ? "\u001b" : stopKey(agent, () => {
+    const key = stopKey(agent, () => {
       const buffer = term.buffer.active;
       return Array.from({ length: term.rows }, (_, row) => buffer.getLine(buffer.baseY + row)?.translateToString(true) ?? "");
     }, hermesStopSentRef.current, hermesCtrlCAtRef.current, now);
@@ -118,7 +117,7 @@ export function useTypedKeys(deps: TypedKeysDeps) {
       if (paneId !== null && now.inputLease(paneId) !== lease) return;
       press("\u001b");
     }, DOUBLE_ESCAPE_GAP_MS);
-  }, [agent, deps.acpChild, paneId, dropSecondEscape]);
+  }, [agent, paneId, dropSecondEscape]);
 
   return { pressKey, toggleModifier, abortTurn };
 }

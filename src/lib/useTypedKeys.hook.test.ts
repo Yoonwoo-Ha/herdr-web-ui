@@ -4,7 +4,7 @@ import { act, create, type ReactTestRenderer } from "react-test-renderer";
 import { DOUBLE_ESCAPE_GAP_MS } from "./hermesStop.ts";
 import { useTypedKeys, type TypedKeysDeps } from "./useTypedKeys.ts";
 
-function mount(agent: string, acpChild = false) {
+function mount(agent: string) {
   const sent: string[] = [];
   let pane: string | null = "p1";
   let lease = "1:0:0";
@@ -18,7 +18,7 @@ function mount(agent: string, acpChild = false) {
   };
   let hook: ReturnType<typeof useTypedKeys> | null = null;
   function Probe() {
-    hook = useTypedKeys({ ...refs, agent, acpChild, agentStatus: "working", commitPendingText: () => {}, setLatch: () => {}, consumeModifiers: () => {},
+    hook = useTypedKeys({ ...refs, agent, agentStatus: "working", commitPendingText: () => {}, setLatch: () => {}, consumeModifiers: () => {},
       paneId: pane, setInputError: () => {} } as unknown as TypedKeysDeps);
     return null;
   }
@@ -46,14 +46,6 @@ describe("the second Escape of a two-Escape Stop", () => {
     expect(h.sent).toEqual(["\u001b"]);
     h.wait();
     expect(h.sent).toEqual(["\u001b", "\u001b"]);
-  });
-
-  it("sends a single Stop for ACP children without looking for TUI-specific hints", () => {
-    for (const agent of ["grok", "hermes", "kilo"]) {
-      const h = mount(agent, true);
-      try { h.stop(); h.wait(); expect(h.sent).toEqual(["\u001b"]); }
-      finally { h.unmount(); }
-    }
   });
 
   it("is not sent to a pane the terminal was switched to meanwhile", () => {

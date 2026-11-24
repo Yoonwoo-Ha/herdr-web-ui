@@ -563,7 +563,7 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
           const child = acpChildOf(terminal, options.acp);
           if (!child) return terminal;
           const name = terminal.name && terminal.name !== terminal.address ? terminal.name : AGENT_CATALOG.find(entry => entry.id === child.harness)?.name ?? child.harness;
-          return { ...terminal, name, acp: { agent: child.client.agentGone ? null : child.harness, status: child.client.status, plan: child.client.history.plan } };
+          return { ...terminal, name, acp: { agent: child.client.agentGone ? null : child.harness, status: child.client.status, plan: child.client.history.plan, ...(child.client.holdGeneration === null ? {} : { hold: { child_id: child.id, generation: child.client.holdGeneration } }) } };
         });
       },
     });

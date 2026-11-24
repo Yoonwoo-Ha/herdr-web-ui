@@ -75,6 +75,24 @@ describe.skipIf(!keeperBuilt)("AcpChildren with a fake core running the real kee
     expect(children.forPane("t999")).toBeUndefined();
   });
 
+  it("tells its listeners when a person holds a child and hands it back, and finds it under its parent", async () => {
+    setUp();
+    const child = await children.start({ harness: "fake", argv: [FAKE_AGENT], cwd: dir, parentPane: "t42" });
+    const seen: (number | null)[] = [];
+    const off = children.onStatus((changed) => { if (changed === child) seen.push(changed.client.holdGeneration); });
+    try {
+      const generation = await child.client.hold(child.client.session!);
+      await until(child.client, "the hold", () => child.client.holdGeneration === generation);
+      expect(seen).toContain(generation);
+      await child.client.request("_keeper/release", { sessionId: child.client.session, generation });
+      await until(child.client, "the release", () => child.client.holdGeneration === null);
+      expect(seen.at(-1)).toBeNull();
+      expect((await children.childrenOf("t42")).map((found) => found.id)).toEqual([child.id]);
+    } finally {
+      off();
+    }
+  });
+
   it("starts with no parent when none is given, never under the server's own terminal", async () => {
     setUp();
     await children.start({ harness: "fake", argv: [FAKE_AGENT], cwd: dir });
@@ -255,6 +273,31 @@ describe("AcpChildren without a keeper", () => {
       expect(await children.start({ harness: "fake", argv: ["x"], cwd: dir }).catch((error: unknown) => error)).toBeInstanceOf(AcpUnavailable);
       expect(fake.calls().filter((call) => call.method === "terminal.run")).toEqual([]);
     } finally {
+      connection.close();
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("finds the children a pane started among its own, by the core's parent", async () => {
+    const fake = new FakeHcCore();
+    const connection = new HcConnection(() => fake.transport());
+    const dir = mkdtempSync(join(process.env["TMPDIR"] || tmpdir(), "acpc-"));
+    const children = new AcpChildren(join(dir, "acp"), { hc: connection, keeperBin: () => null });
+    const own = (id: string, parent: string) => {
+      mkdirSync(join(dir, "acp", id), { recursive: true, mode: 0o700 });
+      writeFileSync(join(dir, "acp", id, "child.json"), JSON.stringify({ harness: "opencode" }));
+      return fake.spawn({ argv: ["keeper"], labels: { "ovis.acp": id }, parent }).address;
+    };
+    try {
+      const first = own("aaaaaaaaaaaa", "t1");
+      const second = own("bbbbbbbbbbbb", "t1");
+      own("cccccccccccc", "t2");
+      fake.spawn({ argv: ["sh"], labels: { "ovis.acp": "dddddddddddd" }, parent: "t1" });
+      await children.restore();
+      expect((await children.childrenOf("t1")).map((child) => child.terminal).sort()).toEqual([first, second].sort());
+      expect(await children.childrenOf("t9")).toEqual([]);
+    } finally {
+      children.close();
       connection.close();
       rmSync(dir, { recursive: true, force: true });
     }

@@ -14,7 +14,10 @@ offer only one-time choices. The child must report that mode over ACP before rec
 again at every prompt. A changed mode is refused, not reset behind the person's back.
 With an independently verified parent profile, the child's profile must match instead.
 
-To configure the local child allowlist, a driving device can `PUT /api/preferences` with, for example:
+Settings → Agents → **Let agents call other agents** turns starting and sending on (`start`) or
+back to look-only (`view`), on this PC's herdr-core and not on Windows. **Agents they may call** offers
+the installed agents an unverified parent may start. A driving device can set the same with
+`PUT /api/preferences`, for example:
 
 ```json
 {"settings":{"agentHarnessTool":{"level":"start","depth":1,"harnesses":["opencode"]}}}
@@ -56,9 +59,13 @@ The shell command never tries the server's ordinary HTTP credential.
 A driving device can cancel a tool child's turn with `POST /api/pane/turn/cancel {"pane_id":"t12"}`.
 This leaves the child alive but holds it against new agent input. The same device route group
 accepts `POST /api/pane/turn/release` with `pane_id` and the cancel receipt's `child_id` and
-`generation`. An older receipt cannot release a newer hold.
+`generation`. An older receipt cannot release a newer hold. In the chat, a child's Stop button
+sets that hold and **Hand back** releases it; the sidebar marks a held child **Stopped**.
+`POST /api/pane/turn/cancel-children {"pane_id":"t7"}` holds every ACP child pane `t7` started
+(its menu's **Stop agents it called**) and answers `held` (pane, `child_id`, `generation`) and
+`failed` (panes that did not take the hold).
 
 The token travels only over the private Unix socket, not HTTP. A same-account program can read
 the token file: this is run attribution, not isolation from other programs of the same OS user.
 Starts elsewhere return `approval_required` and start nothing. Cross-machine approval cards,
-a settings row, Windows transport and terminal-drive fallback are not implemented here.
+a depth setting in Settings, Windows transport and terminal-drive fallback are not implemented here.

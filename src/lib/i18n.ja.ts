@@ -757,6 +757,7 @@ const BASE: Record<string, string> = {
   "Add a note": "メモを追加",
   "Note": "メモ",
   "Memory|notes": "メモリー",
+  "Stopped by you. The agent that called it cannot give it new work.": "あなたが停止 · 呼び出したエージェントは新しい作業を渡せません。",
 };
 
 export const JA_PARTS: Record<string, Record<string, string>> = {

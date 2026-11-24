@@ -1065,12 +1065,28 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return handleSessionResumeRequest(request, { readOnly, stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome }, holdOpen: (seconds) => ctx.timeout(request, seconds) });
   }
 
-  if (acp && (pathname === "/api/pane/turn/cancel" || pathname === "/api/pane/turn/release")) {
+  if (acp && (pathname === "/api/pane/turn/cancel" || pathname === "/api/pane/turn/release" || pathname === "/api/pane/turn/cancel-children")) {
     setRequestRoute(pathname);
     if (request.method !== "POST") return badRequest("method_not_allowed", "Use POST.");
     const body = await readJsonObject(request);
     if (body instanceof Response) return body;
     if (typeof body.pane_id !== "string") return badRequest("missing_pane_id", "pane_id is required.");
+    if (pathname.endsWith("/cancel-children")) {
+      // every ACP child the pane started gets the same hold as its own Stop; one a person holds already keeps its hold
+      // (a new one would cancel the turn that person started), and one that cannot take it is named
+      let children;
+      try { children = await acp.childrenOf(body.pane_id); } catch (error) { return errorResponse(error); }
+      const tried = await Promise.allSettled(children.map(async child => {
+        if (!child.client.connected || !child.client.session) throw new Error("not connected");
+        if (child.client.holdGeneration !== null) return { pane_id: child.terminal, child_id: child.id, generation: child.client.holdGeneration };
+        return { pane_id: child.terminal, child_id: child.id, generation: await child.client.hold(child.client.session) };
+      }));
+      return jsonResponse({
+        ok: true,
+        held: tried.flatMap(outcome => outcome.status === "fulfilled" ? [outcome.value] : []),
+        failed: children.filter((_, index) => tried[index]?.status === "rejected").map(child => child.terminal),
+      });
+    }
     const child = acp.forPane(body.pane_id);
     if (!child?.client.connected || !child.client.session) return badRequest("unavailable", "No connected ACP child.");
     const cancel = pathname.endsWith("/cancel");

@@ -100,6 +100,7 @@ import type {
   WorktreeOpened,
   WorktreeRemoved,
   ZoomPaneRequest,
+  AcpHold,
 } from "../../shared/protocol.ts";
 import { SUPPORTED_AGENT_KINDS } from "../../shared/supported-agents.ts";
 import type { PaneScrollInfo } from "../../shared/herdr-api.generated.ts";
@@ -1054,6 +1055,22 @@ export async function closePane(paneId: string, machineId = "local"): Promise<vo
 /** POST /api/pane/focus: herdr brings this pane and its tab/workspace to the front. */
 export async function focusPane(paneId: string, machineId = "local"): Promise<void> {
   await sendJson(machinePath(machineId, "pane/focus"), "POST", { pane_id: paneId } satisfies FocusPaneRequest);
+}
+
+/** POST /api/pane/turn/cancel: a person's Stop on an ACP child. Its turn is cancelled and the agent that started it gets no new turn until it is handed back. */
+export async function holdAcpChild(paneId: string, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/turn/cancel"), "POST", { pane_id: paneId });
+}
+
+/** POST /api/pane/turn/release: hands a stopped ACP child back, for the hold its pane reports (HerdrPane `acp_hold`). */
+export async function releaseAcpChild(paneId: string, hold: AcpHold, machineId = "local"): Promise<void> {
+  await sendJson(machinePath(machineId, "pane/turn/release"), "POST", { pane_id: paneId, ...hold });
+}
+
+/** POST /api/pane/turn/cancel-children: the same Stop on every ACP child the pane started; `failed` names the panes that did not take it. */
+export async function holdAcpChildren(paneId: string, machineId = "local"): Promise<{ failed: string[] }> {
+  const answer = await (await sendJson(machinePath(machineId, "pane/turn/cancel-children"), "POST", { pane_id: paneId })).json() as { failed?: unknown };
+  return { failed: Array.isArray(answer.failed) ? answer.failed.filter((pane): pane is string => typeof pane === "string") : [] };
 }
 
 export async function renamePane(paneId: string, label: string, machineId = "local"): Promise<void> {

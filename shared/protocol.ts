@@ -68,6 +68,8 @@ export type HerdrPane = PaneInfo & {
   parent_pane_id?: string;
   /** Stop on this pane cancels a keeper session rather than interrupting a TUI. */
   acp_child?: true;
+  /** A person stopped this ACP child: the agent that started it gets no new turn until a person hands it back (POST /api/pane/turn/release with these). */
+  acp_hold?: AcpHold;
   own_tab?: true;
   agent_kind?: string;
   agent_message?: string;
@@ -846,6 +848,9 @@ export interface OmpBtwHistory {
 }
 
 /** How far a pane's plan has got, for the sidebar: `current` names the step in progress. */
+/** The keeper's hold a person's Stop set on an ACP child, as the release route takes it back. */
+export interface AcpHold { child_id: string; generation: number }
+
 export interface PlanSummary {
   done: number;
   total: number;

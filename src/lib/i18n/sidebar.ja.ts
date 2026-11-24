@@ -84,4 +84,7 @@ export const SIDEBAR_JA: Record<string, string> = {
   "Remove from {group}": "{group} から外す",
   "{count} working": "作業中 {count} 件",
   "On this device, an agent's helpers fold into one line under it in the Agents list, with their count. A helper that needs you and the one you selected stay in sight.": "このデバイスのエージェント一覧で、エージェントのヘルパーをその下の 1 行にたたみ、数を表示します。応答が必要なヘルパーと選択中のヘルパーは表示されたままです。",
+  "Stopped": "停止中",
+  "Stop agents it called ({count})": "呼び出したエージェントをすべて停止 ({count})",
+  "Some agents it called were not stopped. Try again.": "呼び出したエージェントの一部を停止できませんでした。もう一度お試しください。",
 };

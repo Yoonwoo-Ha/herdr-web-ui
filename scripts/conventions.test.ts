@@ -452,6 +452,7 @@ describe("demo transport", () => {
   const DEMO_404: Record<string, string> = {
     "/api/pane/turn/cancel": "only a live ACP keeper has a turn a person can cancel",
     "/api/pane/turn/release": "only a live ACP keeper can be handed back",
+    "/api/pane/turn/cancel-children": "only a pane that started live ACP keepers has children a person can stop",
     "/api/worktree/create-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
     "/api/worktree/remove-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
     "/api/account/confirm": "a PC-local screen confirmation (the PC's own confirm page); a browser over the demo never answers one",

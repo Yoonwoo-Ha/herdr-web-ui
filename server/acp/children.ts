@@ -250,13 +250,15 @@ export class AcpChildren {
     this.children.set(child.id, child);
     let state = child.client.status;
     let plan = child.client.history.plan;
+    let hold = child.client.holdGeneration;
     for (const listener of this.listeners) listener(child);
     // a keeper that ended by itself (Ctrl+Q in its pane, its terminal closed) takes its child along
     const off = child.client.onChange(() => {
       if (this.children.get(child.id) !== child) return;
-      if (state !== child.client.status || plan !== child.client.history.plan || child.client.keeperGone) {
+      if (state !== child.client.status || plan !== child.client.history.plan || hold !== child.client.holdGeneration || child.client.keeperGone) {
         state = child.client.status;
         plan = child.client.history.plan;
+        hold = child.client.holdGeneration;
         for (const listener of this.listeners) listener(child);
       }
       if (!child.client.keeperGone) return;
@@ -271,6 +273,12 @@ export class AcpChildren {
   forPane(paneId: string): AcpChild | undefined {
     for (const child of this.children.values()) if (child.terminal === paneId) return child;
     return undefined;
+  }
+
+  /** This server's children whose keeper's terminal hc runs under `parentPane`. */
+  async childrenOf(parentPane: string): Promise<AcpChild[]> {
+    const under = (await this.terminals()).filter(terminal => terminal.state === "live" && terminal.parent === parentPane);
+    return [...this.children.values()].filter(child => under.some(terminal => terminal.address === child.terminal && terminal.labels[LABEL] === child.id));
   }
 
   cancelTurn(id: string): void {

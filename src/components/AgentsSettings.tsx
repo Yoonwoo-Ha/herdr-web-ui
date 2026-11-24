@@ -19,6 +19,7 @@ import { useSettings } from "../lib/settings.ts";
 import { openSetupGuide } from "../lib/setupGuide.ts";
 import { canSignInAgain, glanceWindow, isHubAccount, isSignIn, meterText, moveInOrder, orderProviders, PROVIDER_MARK, PROVIDER_NAME, recordedBy, recordedNote, usageName, useStatuslineSwitch, useUsage, windowLabel } from "../lib/usage.ts";
 import { userErrorMessage, type UserError } from "../lib/userError.ts";
+import { AgentCallsRows } from "./AgentCallsRows.tsx";
 import { AgentMark } from "./AgentMark.tsx";
 import { AgentTile } from "./AgentTile.tsx";
 import { ConfirmDialog } from "./ConfirmDialog.tsx";
@@ -35,6 +36,8 @@ type Translate = ReturnType<typeof useT>;
 export interface AgentsSettingsProps {
   /** a watching device reads the page, but installs, signs in and adds nothing */
   watching: boolean;
+  /** this PC serves herdr-core, whose agents Ovis can give the tool to start other agents */
+  agentCalls?: boolean;
   onLocalLogin: (paneId: string) => void;
   onOpenPane: (machineId: string, paneId: string) => void;
   onOpenGuide: () => void;
@@ -338,7 +341,7 @@ function SectionHead({ children }: { children?: ReactNode }) {
   return <div className="agents-head">{children}</div>;
 }
 
-export function AgentsSettings({ watching, onLocalLogin, onOpenPane, onOpenGuide }: AgentsSettingsProps) {
+export function AgentsSettings({ watching, agentCalls = false, onLocalLogin, onOpenPane, onOpenGuide }: AgentsSettingsProps) {
   const t = useT();
   const { settings } = useSettings();
   const searching = useContext(SettingsQuery).length > 0;
@@ -346,7 +349,7 @@ export function AgentsSettings({ watching, onLocalLogin, onOpenPane, onOpenGuide
   const machineId = useMachineId();
   const local = machineId === "local";
 
-  const [catalog, setCatalog] = useState<{ machineId: string; agents: AgentCatalogRow[]; pathProblem: string | null } | null>(null);
+  const [catalog, setCatalog] = useState<{ machineId: string; agents: AgentCatalogRow[]; pathProblem: string | null; windows: boolean } | null>(null);
   const [catalogError, setCatalogError] = useState<UserError | null>(null);
   const [reads, setReads] = useState(0);
   const [checking, setChecking] = useState(false);
@@ -357,7 +360,7 @@ export function AgentsSettings({ watching, onLocalLogin, onOpenPane, onOpenGuide
     setCatalogError(null);
     setChecking(true);
     fetchAgentCatalog(machineId, abort.signal, reads > 0).then(
-      (answer) => setCatalog({ machineId, agents: answer.agents, pathProblem: answer.path_problem ?? null }),
+      (answer) => setCatalog({ machineId, agents: answer.agents, pathProblem: answer.path_problem ?? null, windows: answer.platform === "windows" }),
       (reason: unknown) => {
         if (abort.signal.aborted) return;
         setCatalogError(reason instanceof ApiError && reason.status === 404 ? { message: t("This PC's Ovis cannot install agents yet. Update it, then try again."), detail: null } : userErrorMessage(reason));
@@ -418,6 +421,7 @@ export function AgentsSettings({ watching, onLocalLogin, onOpenPane, onOpenGuide
   const otherIntegrations = page?.otherIntegrations ?? [];
   return (
     <SettingsBare.Provider value={true}>
+      {local && agentCalls && catalog?.windows !== true && <AgentCallsRows agents={agents ?? []} watching={watching} />}
       {/* the first-run guide again (lib/setupGuide.ts): it sets up this PC, and a watching device is never shown it */}
       {!watching && local && <SettingsGroup section="guide">
         <SettingsRow icon={Compass} label={t("Setup guide")} description={t("Opens the first-run guide again, from its first step, to install coding agents on this PC and connect them. What was set up before stays as it is.")}>

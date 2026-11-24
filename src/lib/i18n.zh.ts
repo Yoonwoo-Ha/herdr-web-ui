@@ -762,6 +762,7 @@ const BASE: Record<string, string> = {
   "Add a note": "添加备注",
   "Note": "备注",
   "Memory|notes": "记忆",
+  "Stopped by you. The agent that called it cannot give it new work.": "已由你停止 · 调用它的 Agent 无法再给它新任务。",
 };
 
 export const ZH_PARTS: Record<string, Record<string, string>> = {

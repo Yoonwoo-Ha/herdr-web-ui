@@ -1342,6 +1342,7 @@ export function App() {
                         agentStatus={item?.agent_status}
                         agentSession={item ? paneSessionKey(item) : null}
                         acpChild={item?.acp_child === true}
+                        acpHold={item?.acp_hold}
                         backgroundTasks={item?.background_tasks ?? 0}
                         plan={machine?.state === "connected" ? (item as HerdrPane | undefined)?.plan ?? null : null}
                         backgroundWait={item?.background_wait === true}

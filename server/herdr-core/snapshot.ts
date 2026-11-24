@@ -1,7 +1,7 @@
 import type { AgentInfo, AgentSessionInfo, AgentStatus, PaneInfo, PaneLayoutSnapshot, PaneProcessInfo, SessionSnapshot, TabInfo, WorkspaceInfo } from "../../shared/herdr-api.generated.ts";
 import { HC_OTHER_WORKSPACE_ID } from "../../shared/machines.ts";
 import { planSummary } from "../../shared/plans.ts";
-import type { HerdrPane } from "../../shared/protocol.ts";
+import type { AcpHold, HerdrPane } from "../../shared/protocol.ts";
 import type { Foreground, Status, Terminal } from "./hc-api.generated.ts";
 import { clampRatio, type Grouping, type LayoutNode, LAYOUT_AREA, parseOvisLayout, place, reconcile, sideBySide } from "./layout-doc.ts";
 import { worktreeOfLabels } from "./worktrees.ts";
@@ -42,7 +42,7 @@ export type HcForeground = Pick<Foreground, "pid" | "name"> & Partial<Pick<Foreg
 /** hc's `parent` is the terminal that started it (`t3`), set once at its start. */
 export type HcTerminal = Pick<Terminal, "address" | "cols" | "rows" | "cwd" | "state"> &
   Partial<Pick<Terminal, "argv" | "pid" | "name" | "title" | "labels" | "turn" | "parent" | "records">> &
-  { acp?: { agent: string | null; status: AgentStatus; plan: import("../../shared/plans.ts").PlanStep[] | null }; status?: HcStatus | null; foreground?: HcForeground | null };
+  { acp?: { agent: string | null; status: AgentStatus; plan: import("../../shared/plans.ts").PlanStep[] | null; hold?: AcpHold }; status?: HcStatus | null; foreground?: HcForeground | null };
 
 /**
  * A terminal on another machine the core reaches (`hc machine add vps`): hc lists and reports it
@@ -390,6 +390,7 @@ function paneOf(terminal: HcTerminal, workspaceId: string, tabId: string, shown:
   return {
     ...(session ? { agent_session: session } : {}),
     ...(terminal.acp ? { acp_child: true as const } : {}),
+    ...(terminal.acp?.hold ? { acp_hold: terminal.acp.hold } : {}),
     ...(terminal.parent && terminal.parent !== terminal.address && shown.has(terminal.parent) ? { parent_pane_id: terminal.parent } : {}),
     ...(terminal.labels?.[SPACE_LABEL] === workspaceId && terminal.labels?.[TAB_LABEL] === tabId ? {} : { own_tab: true as const }),
     ...(terminal.acp ? (terminal.acp.status === "blocked" ? { agent_kind: "permission" } : {}) : reportedFacts(terminal.status)),
