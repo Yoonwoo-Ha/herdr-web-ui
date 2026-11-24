@@ -1,5 +1,5 @@
 #!/bin/bash
-# Attaches a built Rust PTY host set (scripts/pty-sidecar.ts build + manifest) to a published release:
+# Attaches a built Rust PTY host set, with the ACP keeper built beside it (scripts/pty-sidecar.ts build + manifest), to a published release:
 # .github/workflows/pty-sidecar-attach.yml runs it, and scripts/pty-sidecar.test.ts runs it with a fake gh.
 #   pty-sidecar-attach.sh <vX.Y.Z> <dir holding the set>   (GH_TOKEN and GH_REPO as gh reads them)
 # Nothing is uploaded unless the release's asset list was read: a lookup that fails (an HTTP 502, a
@@ -25,7 +25,8 @@ if printf '%s\n' "$assets" | grep -qx ovis-pty-sidecar.json; then
   echo "::error::$tag already has the Rust PTY host." >&2
   exit 1
 fi
-# installs read the manifest first, so it goes last: until it is there, a release offers no host,
-# and a run that failed halfway is repaired by running this again (--clobber replaces its binaries)
-gh release upload "$tag" "$dir"/ovis-pty-sidecar-* "$dir/SHA256SUMS" --clobber
+# installs read a manifest first, so each goes after its binaries and the host's last: until it is there, a release
+# offers no host, and a run that failed halfway is repaired by running this again (--clobber replaces the rest)
+gh release upload "$tag" "$dir"/ovis-pty-sidecar-* "$dir"/ovis-acp-keeper-* "$dir/SHA256SUMS" --clobber
+gh release upload "$tag" "$dir/ovis-acp-keeper.json" --clobber
 gh release upload "$tag" "$dir/ovis-pty-sidecar.json"

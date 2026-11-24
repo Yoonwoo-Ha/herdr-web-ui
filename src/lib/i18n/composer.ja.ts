@@ -197,6 +197,7 @@ export const COMPOSER_JA: Record<string, string> = {
   "Claude Code removed {count} invisible characters": "Claude Code が見えない文字を {count} 個削除しました",
   "Command approval": "コマンドの承認",
   "Choose an option": "選択肢を選ぶ",
+  "This request cannot be shown in full. Press F4 in the terminal to read it.": "このリクエストは全文を表示できません。ターミナルで F4 を押して確認してください。",
   "Permission request": "権限のリクエスト",
   "Waiting for input": "入力待ち",
   "Submit these answers?": "これらの回答を送信しますか?",

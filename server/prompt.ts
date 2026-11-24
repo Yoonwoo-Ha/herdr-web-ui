@@ -19,6 +19,7 @@ import { answerPiAskUser, bindPiAsk, piAskActivity, piAskUserPrompt } from "./pi
 import { badRequest, errorResponse, jsonResponse, setRequestRoute } from "./http.ts";
 import { claudePlanFile } from "./claude-plan.ts";
 import { heldBody, type ApprovalDialog, type ApprovalHub } from "./approvals/hub.ts";
+import { acpPrompt, answerAcpPrompt, type AcpCards } from "./approvals/acp.ts";
 import { listPendingPermissions, listPendingQuestionForms, openCodePermissionsRead, openCodeService, replyOpenCodeForm, replyOpenCodePermission, withShellInput } from "./opencode-service.ts";
 import { opencodeSessionId } from "./opencode.ts";
 import { agentPickerWaits, registry, SCREEN_READ_AGENTS } from "./dialogs/registry.ts";
@@ -1381,6 +1382,8 @@ export interface PromptRequestOptions {
   onAnswered?: () => void;
   /** the approvals an agent this server started holds through its hook */
   approvals?: ApprovalHub;
+  /** the ACP children this server runs: a child's pane gets its keeper's cards, never a read of its screen */
+  acp?: AcpCards;
   answerDeadlineMs?: number;
   beforeKey?: (paneId: string, agent: string, deadline: AbortSignal) => Promise<void>;
 }
@@ -1530,6 +1533,8 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
       if (request.method !== "GET") return badRequest("method_not_allowed", "GET is required.");
       const paneId = url.searchParams.get("pane_id")?.trim();
       if (!paneId) return badRequest("missing_pane_id", "pane_id is required.");
+      const acpChild = options.acp?.forPane(paneId);
+      if (acpChild) return jsonResponse({ prompt: acpPrompt(acpChild), suggestion: null, restored: null } satisfies PanePromptResponse);
       const readSendId = chatSent.get(paneId)?.commands.at(-1)?.id;
       const read = await readPrompt(paneId, options.codexHome, options.openCodeStateDir, options.openCodeState, request.signal);
       if (read.stale) return promptChanged();
@@ -1579,6 +1584,14 @@ export async function handlePromptRequest(request: Request, url: URL, options: P
     if (!body || typeof body !== "object") return badRequest("invalid_answer", "The answer body is required.");
     if (typeof body.pane_id !== "string" || !body.pane_id.trim()) return badRequest("missing_pane_id", "pane_id is required.");
     if (typeof body.prompt_id !== "string" || !body.prompt_id) return badRequest("invalid_answer", "prompt_id is required.");
+    const acpChild = options.acp?.forPane(body.pane_id);
+    if (acpChild) {
+      const answered = await answerAcpPrompt(acpChild, body.prompt_id, body.option_index);
+      if (answered === "invalid") return badRequest("invalid_answer", "option_index must name one of the card's options.");
+      if (answered === "changed") return promptChanged();
+      options.onAnswered?.();
+      return jsonResponse({ ok: true });
+    }
 
     const serialize = options.serialize ?? (<T>(_paneId: string, task: () => Promise<T>) => task());
     const form: { still?: (prompt: InteractivePrompt | null) => boolean } = {};

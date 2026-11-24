@@ -197,6 +197,7 @@ export const COMPOSER_KO: Record<string, string> = {
   "Claude Code removed {count} invisible characters": "Claude Code가 보이지 않는 문자 {count}개를 지웠습니다",
   "Command approval": "명령 승인",
   "Choose an option": "선택지 고르기",
+  "This request cannot be shown in full. Press F4 in the terminal to read it.": "이 요청을 카드에 전부 표시할 수 없습니다. 터미널에서 F4를 눌러 확인하세요.",
   "Permission request": "권한 요청",
   "Waiting for input": "입력을 기다리는 중",
   "Submit these answers?": "이 답을 제출할까요?",

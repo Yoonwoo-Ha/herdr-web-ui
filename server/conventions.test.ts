@@ -248,6 +248,7 @@ describe("herdr socket", () => {
     "server/herdr-core/runtime.ts": "a liveness probe of herdr-core's socket, not herdr's: connects and closes, sends nothing",
     "server/runtime-move-lock.ts": "the herdr-core move's own lock socket, not herdr's: asks which Ovis server holds it",
     "server/browser-mcp.ts": "the desktop app's built-in browser socket (app/electron/src/browserBroker.ts), not herdr's: one call per connection",
+    "server/acp/client.ts": "an ACP keeper's own socket in this server's state folder (crates/acp-keeper), not herdr's: one connection the keeper streams its log on",
   };
 
   it("opens herdr's socket only in server/herdr/client.ts", () => {

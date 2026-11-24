@@ -98,6 +98,8 @@ export interface ArtifactOptions {
    */
   nodePty: boolean;
   ptySidecar?: { binary: string; record?: string };
+  /** the ACP keeper (crates/acp-keeper), carried and vouched for as the PTY host is */
+  acpKeeper?: { binary: string; record?: string };
   downloads?: string;
   build?: (platform: ServerPlatform, outfile: string) => Promise<void>;
   nodeModules?: string;
@@ -125,13 +127,14 @@ export async function stageServerArtifact(options: ArtifactOptions): Promise<voi
     if (platform.startsWith("darwin-")) chmodSync(join(modules, PTY_PACKAGE[platform], "spawn-helper"), 0o755);
   }
   await integrations(dir);
-  if (options.ptySidecar) {
-    const host = join(dir, "bin", "ovis-pty-sidecar");
+  for (const [name, carried] of [["ovis-pty-sidecar", options.ptySidecar], ["ovis-acp-keeper", options.acpKeeper]] as const) {
+    if (!carried) continue;
+    const binary = join(dir, "bin", name);
     mkdirSync(join(dir, "bin"), { recursive: true });
-    copyFileSync(options.ptySidecar.binary, host);
-    chmodSync(host, 0o755);
-    // the record server/pty/host.ts checks before it runs the host: in the binary, for the version compiled into it
-    const record = options.ptySidecar.record ? JSON.parse(readFileSync(options.ptySidecar.record, "utf8")) as Record<string, unknown> : { crate: null };
-    writeFileSync(`${host}.json`, `${JSON.stringify({ ...record, sha256: sha256(readFileSync(host)), version: packageJson().version })}\n`);
+    copyFileSync(carried.binary, binary);
+    chmodSync(binary, 0o755);
+    // the record the server checks before it runs the binary (server/native-binary.ts): in the binary, for the version compiled into it
+    const record = carried.record ? JSON.parse(readFileSync(carried.record, "utf8")) as Record<string, unknown> : { crate: null };
+    writeFileSync(`${binary}.json`, `${JSON.stringify({ ...record, sha256: sha256(readFileSync(binary)), version: packageJson().version })}\n`);
   }
 }

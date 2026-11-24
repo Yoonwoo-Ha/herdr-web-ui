@@ -6,7 +6,7 @@
  */
 import { createHash } from "node:crypto";
 import { chmodSync, cpSync, existsSync, mkdirSync, readFileSync, renameSync, rmSync, writeFileSync } from "node:fs";
-import { join, resolve } from "node:path";
+import { basename, dirname, join, resolve } from "node:path";
 import { REMOTE_BUNDLE_VERSION } from "../shared/machines.ts";
 import { architectures } from "./pty-sidecar.ts";
 import { binaryName, stageServerArtifact } from "./server-artifact.ts";
@@ -73,16 +73,28 @@ function verifyMachO(path: string): void {
   if (bytes.readUInt32LE(0) !== 0xfeedfacf || bytes.readUInt32LE(4) !== cpu) throw new Error(`Wrong macOS architecture: ${path}`);
 }
 
+/** the ACP keeper `scripts/pty-sidecar.ts build` puts beside the PTY host it names (ovis-acp-keeper-<asset> beside ovis-pty-sidecar-<asset>) */
+function keeperBeside(host: string): string | undefined {
+  const name = basename(host);
+  const keeper = join(dirname(host), name.replace(/^ovis-pty-sidecar/, "ovis-acp-keeper"));
+  return name.startsWith("ovis-pty-sidecar") && existsSync(keeper) ? keeper : undefined;
+}
+
 try {
   const ptySidecar = windows ? undefined : process.env["HERDR_BUNDLE_PTY_SIDECAR"];
-  if (ptySidecar) {
-    const want = `${mac ? "macho" : "elf"}-${platform.endsWith("arm64") ? "aarch64" : "x86_64"}`;
-    if (!architectures(ptySidecar).includes(want)) throw new Error(`${ptySidecar} has no ${want} code: ${architectures(ptySidecar).join(", ")}`);
-  } else if (!windows) {
-    console.log(`${platform}: HERDR_BUNDLE_PTY_SIDECAR is not set, so this bundle has no Rust PTY host`);
+  const acpKeeper = ptySidecar ? keeperBeside(ptySidecar) : undefined;
+  const want = `${mac ? "macho" : "elf"}-${platform.endsWith("arm64") ? "aarch64" : "x86_64"}`;
+  for (const binary of [ptySidecar, acpKeeper]) {
+    if (binary && !architectures(binary).includes(want)) throw new Error(`${binary} has no ${want} code: ${architectures(binary).join(", ")}`);
   }
+  if (!ptySidecar && !windows) console.log(`${platform}: HERDR_BUNDLE_PTY_SIDECAR is not set, so this bundle has no Rust PTY host`);
+  else if (ptySidecar && !acpKeeper) console.log(`${platform}: no ovis-acp-keeper beside ${ptySidecar}, so this bundle has no ACP keeper`);
   // nothing native on Windows: without Node and node-pty the server finds no PTY sidecar and mirrors panes (server/pty/sidecar.ts)
-  await stageServerArtifact({ platform: serverPlatform, dir: stage, nodePty: !windows, downloads, ...(ptySidecar ? { ptySidecar: { binary: ptySidecar } } : {}) });
+  await stageServerArtifact({
+    platform: serverPlatform, dir: stage, nodePty: !windows, downloads,
+    ...(ptySidecar ? { ptySidecar: { binary: ptySidecar } } : {}),
+    ...(acpKeeper ? { acpKeeper: { binary: acpKeeper } } : {}),
+  });
   const bundle = { version: REMOTE_BUNDLE_VERSION, platform, server: (JSON.parse(readFileSync(join(root, "package.json"), "utf8")) as { version: string }).version, bun: Bun.version };
   if (windows) {
     writeFileSync(join(stage, "bundle.json"), JSON.stringify({ ...bundle, herdr: null, node: null, native_smoke_tested: false }));

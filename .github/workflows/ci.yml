@@ -254,8 +254,19 @@ jobs:
       - name: Rust unit tests
         if: needs.changes.outputs.draft != 'true'
         run: cargo test --locked --manifest-path crates/pty-sidecar/Cargo.toml
+      - name: ACP keeper unit tests
+        if: needs.changes.outputs.draft != 'true'
+        run: cargo test --locked --manifest-path crates/acp-keeper/Cargo.toml
       - run: bun install --frozen-lockfile
         if: needs.changes.outputs.draft != 'true'
+      - name: Build the ACP keeper and test agent
+        if: needs.changes.outputs.draft != 'true'
+        run: cargo build --release --locked --manifest-path crates/acp-keeper/Cargo.toml --examples --bins
+      - name: ACP keeper integration tests
+        if: needs.changes.outputs.draft != 'true'
+        env:
+          OVIS_REQUIRE_ACP_KEEPER: '1'
+        run: bun test server/acp server/approvals/acp.test.ts
       - name: PtySession on both hosts
         if: needs.changes.outputs.draft != 'true'
         run: bun test ./server/pty/host.test.ts
@@ -329,6 +340,7 @@ jobs:
           set -euo pipefail
           # one file per line: a new live test file is added by adding its line
           files=(
+            ./server/acp/children.live.test.ts
             ./server/herdr-core/live.test.ts
             ./server/herdr-core/socket-transport.live.test.ts
             ./server/herdr-core/core.fake.live.test.ts
