@@ -1086,6 +1086,8 @@ export const Turn = memo(function Turn({ paneId, turn, rowKey, live, waiting, sh
     </section>;
   }
   const notice = turn.parts.find((part): part is Extract<ConversationPart, { kind: "notice" }> => part.kind === "notice");
+  // a stop (Esc): a quiet line where the turn stopped, as Claude Code's own terminal draws it
+  if (notice?.source === "stopped") return <p className="chat-goal-wait chat-stopped"><span>{t("Stopped")}{time !== null && <> · {time}</>}</span></p>;
   if (notice !== undefined) {
     return <ChatDetails memoryKey="notice" className="chat-compact chat-notice">
       <summary><span className="chat-notice-label">{noticeLabel(t, notice)}</span>{time !== null && <> · {time}</>}</summary>

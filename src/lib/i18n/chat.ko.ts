@@ -117,6 +117,7 @@ export const CHAT_KO: Record<string, string> = {
   "Ran in terminal": "터미널에서 실행함",
   "Open Terminal": "터미널 열기",
   "Background result delivered": "백그라운드 결과 도착",
+  "Stopped": "중지됨",
   "Background task ended": "백그라운드 작업 끝남",
   "Goal continues": "목표 계속 진행",
   "background work": "백그라운드 작업",
