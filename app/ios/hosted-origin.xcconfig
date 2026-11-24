@@ -2,6 +2,10 @@
 // `bun run build:web` writes hosted-origin.generated.xcconfig from OVIS_APP_URL, the origin it gives the app's pages
 // (app/scripts/hosted-origin.ts). "/$()/" keeps "//" from starting a comment.
 OVIS_APP_ORIGIN = https:/$()/app.ovis.sh
+// Where the shell comes from, OvisAppShell in App/Info.plist: bundled (the app carries what that run packed into
+// app/bundled-shell, and serves it itself, never from the network), or hosted (loaded from OVIS_APP_ORIGIN, as every build
+// did before: a preview app, the QA twin) when that run had OVIS_APP_SHELL=hosted or an OVIS_APP_URL.
+OVIS_APP_SHELL = bundled
 // The app's first screen, OvisAppHome in App/Info.plist: hosted (the hosted shell's Connect a PC screen), or bundled
 // (the app's own page) when that run had OVIS_APP_HOME=bundled.
 OVIS_APP_HOME = hosted

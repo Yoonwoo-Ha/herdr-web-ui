@@ -613,12 +613,18 @@ document.getElementById("back-to-pc").addEventListener("click", async () => {
  * stays on this page, with all of it working. In the column the line is the screen's title, the sheep dimmed.
  */
 function showFallback(state) {
+  // `stuck`: the app's own copy of the hosted screen did not open (the iOS app, getState), which is not the internet's
+  // doing: the line says that instead, and it shows where no Try again does (a copy the app will not serve)
+  const stuck = state.stuck === true;
   const fallback = state.fallback === true;
-  document.getElementById("offline").hidden = !fallback;
+  document.getElementById("offline").hidden = !(fallback || stuck);
+  if (stuck) document.getElementById("offline-title").textContent = t("Ovis's own screens did not open here", "Ovis 화면이 열리지 않았어요");
+  // Try again asks for the hosted screen again, which a copy the app will not serve cannot give
+  document.getElementById("try-home").hidden = stuck && !fallback;
   if (!COLUMN) return;
-  document.getElementById("title").hidden = fallback;
-  document.getElementById("offline-title").hidden = !fallback;
-  screen.classList.toggle("offline", fallback);
+  document.getElementById("title").hidden = fallback || stuck;
+  document.getElementById("offline-title").hidden = !(fallback || stuck);
+  screen.classList.toggle("offline", fallback || stuck);
 }
 
 document.getElementById("try-home").addEventListener("click", async () => {

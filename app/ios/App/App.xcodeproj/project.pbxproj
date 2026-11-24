@@ -42,6 +42,7 @@
 		4E5244520000000000000002 /* HerdrBridgeViewController.swift in Sources */ = {isa = PBXBuildFile; fileRef = 4E5244520000000000000001 /* HerdrBridgeViewController.swift */; };
 		5C0BE9A70000000000000002 /* ScopePath.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0BE9A70000000000000001 /* ScopePath.swift */; };
 		5C0BE9A70000000000000004 /* OpeningWatch.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0BE9A70000000000000003 /* OpeningWatch.swift */; };
+		5C0BE9A70000000000000006 /* ShellHost.swift in Sources */ = {isa = PBXBuildFile; fileRef = 5C0BE9A70000000000000005 /* ShellHost.swift */; };
 /* End PBXBuildFile section */
 
 /* Begin PBXContainerItemProxy section */
@@ -96,6 +97,7 @@
 		4E5244520000000000000001 /* HerdrBridgeViewController.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = HerdrBridgeViewController.swift; sourceTree = "<group>"; };
 		5C0BE9A70000000000000001 /* ScopePath.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ScopePath.swift; sourceTree = "<group>"; };
 		5C0BE9A70000000000000003 /* OpeningWatch.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = OpeningWatch.swift; sourceTree = "<group>"; };
+		5C0BE9A70000000000000005 /* ShellHost.swift */ = {isa = PBXFileReference; lastKnownFileType = sourcecode.swift; path = ShellHost.swift; sourceTree = "<group>"; };
 		958DCC722DB07C7200EA8C5F /* debug.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = debug.xcconfig; path = ../debug.xcconfig; sourceTree = SOURCE_ROOT; };
 		6A0E5C1D0000000000000001 /* hosted-origin.xcconfig */ = {isa = PBXFileReference; lastKnownFileType = text.xcconfig; name = hosted-origin.xcconfig; path = ../hosted-origin.xcconfig; sourceTree = SOURCE_ROOT; };
 /* End PBXFileReference section */
@@ -168,6 +170,7 @@
 				4E5244520000000000000001 /* HerdrBridgeViewController.swift */,
 				5C0BE9A70000000000000001 /* ScopePath.swift */,
 				5C0BE9A70000000000000003 /* OpeningWatch.swift */,
+				5C0BE9A70000000000000005 /* ShellHost.swift */,
 				50379B222058CBB4000EE86E /* capacitor.config.json */,
 				504EC3071FED79650016851F /* AppDelegate.swift */,
 				504EC30B1FED79650016851F /* Main.storyboard */,
@@ -213,6 +216,7 @@
 				504EC3001FED79650016851F /* Sources */,
 				504EC3011FED79650016851F /* Frameworks */,
 				504EC3021FED79650016851F /* Resources */,
+				5C0BE9A70000000000000007 /* Carry the shell */,
 				A67F098E31CE4D459B24000D /* Embed Foundation Extensions */,
 			);
 			buildRules = (
@@ -318,7 +322,27 @@
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 			shellPath = /bin/sh;
-			shellScript = "/bin/sh \"$SRCROOT/../check-hosted-origin.sh\" \"$SRCROOT/App/public/shell.js\" \"$OVIS_APP_ORIGIN\" \"$OVIS_APP_HOME\"\n";
+			shellScript = "/bin/sh \"$SRCROOT/../check-hosted-origin.sh\" \"$SRCROOT/App/public/shell.js\" \"$OVIS_APP_ORIGIN\" \"$OVIS_APP_HOME\" \"$OVIS_APP_SHELL\" \"$SRCROOT/../../bundled-shell\" \"$ACTION\" \"$PRODUCT_BUNDLE_IDENTIFIER\"\n";
+		};
+		5C0BE9A70000000000000007 /* Carry the shell */ = {
+			isa = PBXShellScriptBuildPhase;
+			alwaysOutOfDate = 1;
+			buildActionMask = 2147483647;
+			files = (
+			);
+			inputFileListPaths = (
+			);
+			inputPaths = (
+				"$(SRCROOT)/../carry-shell.sh",
+			);
+			name = "Carry the shell";
+			outputFileListPaths = (
+			);
+			outputPaths = (
+			);
+			runOnlyForDeploymentPostprocessing = 0;
+			shellPath = /bin/sh;
+			shellScript = "/bin/sh \"$SRCROOT/../carry-shell.sh\" \"$OVIS_APP_SHELL\" \"$SRCROOT/../../bundled-shell\" \"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\" \"$ACTION\"\n";
 		};
 /* End PBXShellScriptBuildPhase section */
 
@@ -347,6 +371,7 @@
 				4E5244520000000000000002 /* HerdrBridgeViewController.swift in Sources */,
 				5C0BE9A70000000000000002 /* ScopePath.swift in Sources */,
 				5C0BE9A70000000000000004 /* OpeningWatch.swift in Sources */,
+				5C0BE9A70000000000000006 /* ShellHost.swift in Sources */,
 			);
 			runOnlyForDeploymentPostprocessing = 0;
 		};

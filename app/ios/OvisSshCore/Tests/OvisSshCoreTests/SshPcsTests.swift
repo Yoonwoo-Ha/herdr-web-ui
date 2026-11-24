@@ -182,6 +182,23 @@ final class SshPcsTests: XCTestCase {
         XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: nil))
     }
 
+    func testABuildThatServesTheShellFromInsideTheAppLetsThatShellOpenTheSshSetup() {
+        let shell = URL(string: "capacitor://app.ovis.sh")
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://app.ovis.sh/#pcs"), appOrigin: shell))
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://app.ovis.sh/s/0123456789abcdef0123456789abcdef/"), appOrigin: shell))
+        // on the app's scheme a host is as it is written, with no port: WebKit keeps another spelling another origin
+        for page in ["capacitor://APP.ovis.sh/#pcs", "capacitor://LOCALHOST/index.html", "capacitor://localhost:8080/index.html", "capacitor://app.ovis.sh:443/"] {
+            XCTAssertFalse(SshPcs.setupOpener(URL(string: page), appOrigin: shell), page)
+        }
+        XCTAssertTrue(SshPcs.setupOpener(URL(string: "capacitor://localhost/index.html"), appOrigin: shell))
+        // the hosted app from the network is no page of such a build, nor is another host on the app's scheme
+        for page in ["https://app.ovis.sh/#pcs", "capacitor://other.example/", "capacitor://app.ovis.sh.evil.example/", "capacitor://app.ovis.sh:8443/", "https://desk.tail1e211e.ts.net/"] {
+            XCTAssertFalse(SshPcs.setupOpener(URL(string: page), appOrigin: shell), page)
+        }
+        // a hosted build never takes the scheme's other hosts for its shell
+        XCTAssertFalse(SshPcs.setupOpener(URL(string: "capacitor://app.ovis.sh/#pcs"), appOrigin: URL(string: "https://app.ovis.sh")))
+    }
+
     func testGatesAreLongAndUnguessable() {
         let gates = Set((0..<50).map { _ in SshPcs.newGate() })
         XCTAssertEqual(gates.count, 50)

@@ -33,7 +33,8 @@ export function appShell(value: string | undefined, appUrl: string | null): AppS
  * Where, under app/, the carried shell is written once for every platform's build: `shell/` is the dist-shell the app
  * serves, `shell-policy.json` the policies it sends with it (`page` on every answer, `render` alone on a PC's render
  * host). Outside app/www, so `bunx cap sync` leaves it alone and the app's own origin (https://localhost) never serves
- * it: the Android build adds it as an assets folder of its own (android/app/build.gradle).
+ * it: the Android build adds it as an assets folder of its own (android/app/build.gradle), and the iOS build copies it
+ * into the app as it is (ios/carry-shell.sh).
  */
 export const SHELL_ASSETS = "bundled-shell";
 

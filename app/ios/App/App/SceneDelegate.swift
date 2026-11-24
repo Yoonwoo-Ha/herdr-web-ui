@@ -8,6 +8,8 @@ class SceneDelegate: UIResponder, UIWindowSceneDelegate {
         guard let windowScene = scene as? UIWindowScene else { return }
 
         window = UIWindow(windowScene: windowScene)
+        // before anything opens: the saved PCs as this build can open them
+        PCStore.settleShell()
         window?.rootViewController = HerdrBridgeViewController.first()
         window?.makeKeyAndVisible()
 

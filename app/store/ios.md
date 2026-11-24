@@ -44,9 +44,20 @@ account sign-in, #4256, with the privacy manifest of #4273), approved and on the
 since 2026-11-20; build 10, from `0c4f0673`, came before it. Check App Store Connect before uploading in case a later build has already been uploaded. The App and OvisNotifications targets inherit the same project-level
 build number in Debug and Release.
 
+The app carries the hosted shell of a release ([The shell inside the app](../../docs/native-app.md#the-shell-inside-the-app-ios)),
+and Xcode archives `sh.ovis.app` only with one: the tag's `dist-shell.tar.gz`, checked against the SHA-256 the release
+published with it, never a shell built on this Mac, and never none. Build from the same tag, as the Android app is
+(`app/store/android.md`), so the native code and the shell it serves are one release's:
+
 ```bash
-git switch main && git pull
-bun install && cd app && bun install && bun run sync   # build:web, then cap sync ios
+tag=v0.5.10   # the release whose shell the app carries
+git switch --detach "$tag"
+sh app/ios/check.sh                                     # the app's Swift tests, which no CI job runs
+bun install && (cd app && bun install)
+dir="$(mktemp -d)"
+gh release download "$tag" --pattern 'dist-shell.tar.gz*' --dir "$dir"
+cd app && OVIS_APP_SHELL_ARCHIVE="$dir/dist-shell.tar.gz" OVIS_APP_SHELL_SHA256="$(cut -d ' ' -f 1 "$dir/dist-shell.tar.gz.sha256")" \
+  OVIS_APP_SHELL_TAG="$tag" bun run sync                # build:web, then cap sync ios
 bun run open                                            # Xcode
 ```
 

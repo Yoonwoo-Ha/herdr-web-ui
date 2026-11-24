@@ -18,7 +18,7 @@ describe("where a build takes the shell from", () => {
     for (const text of ["Bundled", "network", "1"]) expect(() => appShell(text, null)).toThrow("OVIS_APP_SHELL must be bundled or hosted");
   });
 
-  it("is written for Android alone, and only when it is hosted", () => {
+  it("is written for both apps, and only when it is hosted", () => {
     const dir = mkdtempSync(join(tmpdir(), "app-shell-origin-"));
     try {
       mkdirSync(join(dir, "android/app"), { recursive: true });
@@ -27,10 +27,10 @@ describe("where a build takes the shell from", () => {
       const ios = join(dir, "ios/hosted-origin.generated.xcconfig");
       writeNativeOrigin(dir, null, "hosted", "hosted");
       expect(readFileSync(android, "utf8")).toBe("appShell=hosted\n");
-      expect(existsSync(ios)).toBe(false);
+      expect(readFileSync(ios, "utf8")).toBe("OVIS_APP_SHELL = hosted\n");
       writeNativeOrigin(dir, "https://relay-0510.ovis-app.pages.dev", "bundled", "hosted");
       expect(readFileSync(android, "utf8")).toBe("appOrigin=https://relay-0510.ovis-app.pages.dev\nappHome=bundled\nappShell=hosted\n");
-      expect(readFileSync(ios, "utf8")).toBe("OVIS_APP_ORIGIN = https:/$()/relay-0510.ovis-app.pages.dev\nOVIS_APP_HOME = bundled\n");
+      expect(readFileSync(ios, "utf8")).toBe("OVIS_APP_ORIGIN = https:/$()/relay-0510.ovis-app.pages.dev\nOVIS_APP_HOME = bundled\nOVIS_APP_SHELL = hosted\n");
       writeNativeOrigin(dir, null, "hosted", "bundled");
       expect(existsSync(android)).toBe(false);
       expect(existsSync(ios)).toBe(false);

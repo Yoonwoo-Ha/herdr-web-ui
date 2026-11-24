@@ -1,13 +1,15 @@
 import { describe, expect, it } from "bun:test";
 import { spawnSync } from "node:child_process";
-import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
+import { cpSync, existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
+import { packShell, SHELL_ASSETS } from "../app/scripts/bundled-shell.ts";
 import { appHome, appOrigin, writeNativeOrigin } from "../app/scripts/hosted-origin.ts";
 import { pretendardCss } from "../app/scripts/pretendard.ts";
 // @ts-expect-error app/web is plain JavaScript the app carries as is, without types
 import { APP_HOME, APP_ORIGIN, homeHost, knownLogins, listedProviders, loopbackHost, openFailure, parseAddress, relayLink, sshDetails, sshOrAddress, savedPcLabel, tabPcs, tailnetHost } from "../app/web/shell.js";
 import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
+import { SHELL_META, shellHeaders, shellPolicies } from "./shell-build.ts";
 import { encodeOffer } from "../shared/relay-offer.ts";
 
 const SERVER_ID = "0123456789abcdef0123456789abcdef";
@@ -422,7 +424,7 @@ describe("the hosted origin a build gives the native apps", () => {
 
   it("fails an iOS build whose bundled pages name another hosted origin than the native code trusts", () => {
     const dir = mkdtempSync(join(tmpdir(), "hosted-origin-check-"));
-    const check = (shellJs: string, origin: string, home = "hosted") => spawnSync("sh", [join(app, "ios/check-hosted-origin.sh"), shellJs, origin, home], { encoding: "utf8" });
+    const check = (shellJs: string, origin: string, home = "hosted") => spawnSync("sh", [join(app, "ios/check-hosted-origin.sh"), shellJs, origin, home, "hosted", join(dir, "no-shell"), "build", "sh.ovis.app"], { encoding: "utf8" });
     try {
       const shellJs = join(dir, "shell.js");
       writeFileSync(shellJs, `export const ACCOUNT_SIGN_IN = true;\nexport const APP_ORIGIN = ${JSON.stringify(preview)};\nexport const APP_HOME = "hosted";\n`);
@@ -449,6 +451,269 @@ describe("the hosted origin a build gives the native apps", () => {
     } finally {
       rmSync(dir, { recursive: true, force: true });
     }
+  });
+
+  /** A carried shell as packShell leaves it in app/bundled-shell, whole. */
+  const carryShell = (carried: string, provenance: Record<string, unknown> = { source: "checkout" }) => {
+    mkdirSync(join(carried, "shell/assets"), { recursive: true });
+    writeFileSync(join(carried, "shell/index.html"), '<!doctype html><html><head><meta name="ovis-shell" content="relay" />\n<script type="module" src="/assets/index-0123456789.js"></script>\n<link rel="stylesheet" href="/assets/index-abcdefghij.css"></head></html>');
+    writeFileSync(join(carried, "shell/assets/index-0123456789.js"), "export {};");
+    writeFileSync(join(carried, "shell/assets/index-abcdefghij.css"), "");
+    writeFileSync(join(carried, "shell/render.html"), "<!doctype html>");
+    writeFileSync(join(carried, "shell-policy.json"), `${JSON.stringify(shellPolicies())}\n`);
+    writeFileSync(join(carried, "shell-provenance.json"), `${JSON.stringify(provenance)}\n`);
+  };
+  const released = { source: "release", tag: "v0.5.10", sha256: "0".repeat(64), revision: "abc", dirty: false };
+
+  it("fails an iOS build whose shell is not where the build says, and a store archive that would load it from the network", () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-shell-check-"));
+    const shellJs = join(dir, "shell.js");
+    const carried = join(dir, "bundled-shell");
+    const check = (shell: string, action = "build", bundle = "sh.ovis.app", origin = "https://app.ovis.sh") => spawnSync("sh", [join(app, "ios/check-hosted-origin.sh"), shellJs, origin, "hosted", shell, carried, action, bundle], { encoding: "utf8" });
+    try {
+      writeFileSync(shellJs, 'export const APP_ORIGIN = "https://app.ovis.sh";\nexport const APP_HOME = "hosted";\n');
+      // a bundled build needs the shell `bun run build:web` packed: the page, the render host's file and both policies
+      const none = check("bundled");
+      expect(none.status).toBe(1);
+      expect(none.stdout).toContain(`error: OVIS_APP_SHELL is bundled and ${carried} holds no shell/index.html`);
+      carryShell(carried);
+      expect(check("bundled").stdout).toBe("");
+      expect(check("bundled").status).toBe(0);
+      rmSync(join(carried, "shell/render.html"));
+      expect(check("bundled").stdout).toContain("holds no shell/render.html");
+      carryShell(carried);
+      rmSync(join(carried, "shell-policy.json"));
+      expect(check("bundled").stdout).toContain("holds no shell-policy.json");
+      // a hosted build that still holds another run's shell would ship it unused
+      carryShell(carried);
+      const stale = check("hosted", "build", "sh.ovis.app.previewqa");
+      expect(stale.status).toBe(1);
+      expect(stale.stdout).toContain(`error: OVIS_APP_SHELL is hosted and ${carried} still holds a shell from another run`);
+      rmSync(carried, { recursive: true });
+      // a hosted build runs on a simulator or a phone under any bundle ID, and leaves the folder as it found it
+      expect(check("hosted").status).toBe(0);
+      expect(existsSync(carried)).toBe(false);
+      expect(check("hosted", "build", "sh.ovis.app.previewqa").status).toBe(0);
+      expect(check("hosted", "install", "sh.ovis.app.previewqa").status).toBe(0);
+      // but is never archived as the store app
+      const store = check("hosted", "install");
+      expect(store.status).toBe(1);
+      expect(store.stdout).toContain("error: this archive of sh.ovis.app would load the shell from the network");
+      // the shell is served at the hosted origin's host on the app's own scheme, where localhost is the app's own pages
+      writeFileSync(shellJs, 'export const APP_ORIGIN = "https://localhost:8443";\nexport const APP_HOME = "hosted";\n');
+      carryShell(carried);
+      const own = check("bundled", "build", "sh.ovis.app", "https://localhost:8443");
+      expect(own.status).toBe(1);
+      expect(own.stdout).toContain("the app's own pages are at that host");
+      // and anything else is no build this script knows
+      const unset = check("", "build", "sh.ovis.app", "https://localhost:8443");
+      expect(unset.status).toBe(1);
+      expect(unset.stdout).toContain("error: OVIS_APP_SHELL is empty: it is bundled or hosted");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("fails an iOS build whose carried shell is not whole: its page, the files it starts with, and policies the app can send", () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-shell-whole-"));
+    const shellJs = join(dir, "shell.js");
+    const carried = join(dir, "bundled-shell");
+    const check = () => spawnSync("sh", [join(app, "ios/check-hosted-origin.sh"), shellJs, "https://app.ovis.sh", "hosted", "bundled", carried, "build", "sh.ovis.app.previewqa"], { encoding: "utf8" });
+    const broken = (how: () => void, says: string) => {
+      rmSync(carried, { recursive: true, force: true });
+      carryShell(carried);
+      how();
+      const result = check();
+      expect(result.stdout).toContain(says);
+      expect(result.status).toBe(1);
+    };
+    try {
+      writeFileSync(shellJs, 'export const APP_ORIGIN = "https://app.ovis.sh";\nexport const APP_HOME = "hosted";\n');
+      carryShell(carried);
+      expect(check().status).toBe(0);
+      // the app's own page packed in the shell's place, or a page from elsewhere
+      broken(() => writeFileSync(join(carried, "shell/index.html"), "<!doctype html><title>Connect a PC</title>"), "index.html is not the shell's");
+      // a copy that lost a file its page starts with would open blank
+      broken(() => rmSync(join(carried, "shell/assets/index-0123456789.js")), "the carried shell lacks assets/index-0123456789.js");
+      broken(() => rmSync(join(carried, "shell/assets/index-abcdefghij.css")), "the carried shell lacks assets/index-abcdefghij.css");
+      // policies the app cannot read, or a render policy that takes no origin away
+      const policies = shellPolicies();
+      for (const text of ["", "{}", "not json", JSON.stringify({ page: policies.page }), JSON.stringify({ render: policies.render, page: policies.page }),
+        JSON.stringify({ page: policies.page, render: "default-src 'none'" }), JSON.stringify({ page: policies.page, render: "default-src 'none'; report-uri /sandbox" }),
+        JSON.stringify({ page: "", render: policies.render }), JSON.stringify(policies, null, 2)]) {
+        broken(() => writeFileSync(join(carried, "shell-policy.json"), text), "does not hold the shell's two policies, or its render policy has no sandbox");
+      }
+      // a sandbox that hands the origin back takes nothing away: a rendered page would be the shell's origin
+      for (const render of ["sandbox allow-scripts allow-same-origin; default-src 'none'", "default-src 'none'; Sandbox Allow-Same-Origin", "sandbox allow-same-origin"]) {
+        broken(() => writeFileSync(join(carried, "shell-policy.json"), JSON.stringify({ page: policies.page, render })), "has allow-same-origin in its sandbox");
+      }
+      // the word outside the sandbox directive is not its token
+      rmSync(carried, { recursive: true, force: true });
+      carryShell(carried);
+      writeFileSync(join(carried, "shell-policy.json"), JSON.stringify({ page: policies.page, render: "sandbox allow-scripts; report-uri /allow-same-origin" }));
+      expect(check().status).toBe(0);
+      // the policies as they are written today pass, the render host's first word being its sandbox
+      expect(policies.render.startsWith("sandbox allow-scripts;")).toBe(true);
+      expect(policies.render).not.toContain("allow-same-origin");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("archives the store's iOS app only with a release's verified shell, as Gradle packages the Android one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-shell-proof-"));
+    const shellJs = join(dir, "shell.js");
+    const carried = join(dir, "bundled-shell");
+    const check = (action: string, bundle: string) => spawnSync("sh", [join(app, "ios/check-hosted-origin.sh"), shellJs, "https://app.ovis.sh", "hosted", "bundled", carried, action, bundle], { encoding: "utf8" });
+    try {
+      writeFileSync(shellJs, 'export const APP_ORIGIN = "https://app.ovis.sh";\nexport const APP_HOME = "hosted";\n');
+      carryShell(carried, released);
+      expect(check("install", "sh.ovis.app").status).toBe(0);
+      for (const proof of [{ source: "checkout" }, { source: "folder" }, { source: "release", tag: "v0.5.10" }, { source: "release", tag: "main", sha256: "0".repeat(64) },
+        { source: "release", tag: "v0.5.10", sha256: "abc" }]) {
+        carryShell(carried, proof);
+        const refused = check("install", "sh.ovis.app");
+        expect(refused.status).toBe(1);
+        expect(refused.stdout).toContain("error: this archive of sh.ovis.app carries a shell that is no release's");
+        // a build to run, and a test app's archive, take any shell
+        expect(check("build", "sh.ovis.app").status).toBe(0);
+        expect(check("install", "sh.ovis.app.previewqa").status).toBe(0);
+      }
+      rmSync(join(carried, "shell-provenance.json"));
+      expect(check("install", "sh.ovis.app").status).toBe(1);
+      // what packShell writes for a release is what the check reads
+      const from = join(dir, "dist-shell"), packed = join(dir, "packed");
+      mkdirSync(join(from, "assets"), { recursive: true });
+      writeFileSync(join(from, "index.html"), `<!doctype html><html><head>${SHELL_META}<script type="module" src="/assets/index-0123456789.js"></script></head></html>`);
+      writeFileSync(join(from, "assets/index-0123456789.js"), "export {};");
+      writeFileSync(join(from, "render.html"), "<!doctype html>");
+      writeFileSync(join(from, "manifest.webmanifest"), "{}");
+      writeFileSync(join(from, "_headers"), shellHeaders());
+      packShell(from, packed, { source: "release", tag: "v0.5.10", sha256: "f".repeat(64) }, { floor: 0 });
+      rmSync(carried, { recursive: true });
+      cpSync(packed, carried, { recursive: true });
+      const real = check("install", "sh.ovis.app");
+      expect(real.stdout).toBe("");
+      expect(real.status).toBe(0);
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("carries the shell in the iOS app by default, as the Android app does, copied in by a build phase of its own", () => {
+    const xcconfig = readFileSync(join(app, "ios/hosted-origin.xcconfig"), "utf8");
+    expect(xcconfig).toMatch(/^OVIS_APP_SHELL = bundled$/m);
+    // the generated file comes last, so what a run wrote wins
+    expect(xcconfig.indexOf("OVIS_APP_SHELL = bundled")).toBeLessThan(xcconfig.indexOf("#include?"));
+    expect(readFileSync(join(app, "ios/App/App/Info.plist"), "utf8")).toMatch(/<key>OvisAppShell<\/key>\s*<string>\$\(OVIS_APP_SHELL\)<\/string>/);
+    const project = readFileSync(join(app, "ios/App/App.xcodeproj/project.pbxproj"), "utf8");
+    // both phases read the one folder build-web.ts packs for every platform (ios/App is the project's folder)
+    expect(join("ios/App", "../..", SHELL_ASSETS)).toBe(SHELL_ASSETS);
+    expect(project).toContain(`check-hosted-origin.sh\\" \\"$SRCROOT/App/public/shell.js\\" \\"$OVIS_APP_ORIGIN\\" \\"$OVIS_APP_HOME\\" \\"$OVIS_APP_SHELL\\" \\"$SRCROOT/../../${SHELL_ASSETS}\\" \\"$ACTION\\" \\"$PRODUCT_BUNDLE_IDENTIFIER\\"`);
+    expect(project).toContain(`carry-shell.sh\\" \\"$OVIS_APP_SHELL\\" \\"$SRCROOT/../../${SHELL_ASSETS}\\" \\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\\"`);
+    // after the resources, so the app is there, and among the phases that end before it is signed
+    const phases = /504EC3031FED79650016851F \/\* App \*\/ = \{[^}]*buildPhases = \(([^)]*)\)/.exec(project)?.[1] ?? "";
+    expect(phases.indexOf("/* Check the hosted origin */")).toBeLessThan(phases.indexOf("/* Sources */"));
+    expect(phases.indexOf("/* Resources */")).toBeGreaterThan(-1);
+    expect(phases.indexOf("/* Resources */")).toBeLessThan(phases.indexOf("/* Carry the shell */"));
+    // no reference to the folder itself: a hosted build has none, and Xcode fails on a folder that is not there
+    expect(project).not.toContain("lastKnownFileType = folder; path = \"bundled-shell\"");
+  });
+
+  it("puts the packed shell into a bundled iOS app, its two pages under names no host answers as a page, and takes a stale one out of a hosted one", () => {
+    const dir = mkdtempSync(join(tmpdir(), "app-shell-carry-"));
+    const carry = (shell: string, action = "build") => spawnSync("sh", [join(app, "ios/carry-shell.sh"), shell, join(dir, "bundled-shell"), join(dir, "App.app"), action], { encoding: "utf8" });
+    const inApp = (file: string) => join(dir, "App.app/bundled-shell", file);
+    try {
+      carryShell(join(dir, "bundled-shell"));
+      mkdirSync(join(dir, "App.app"));
+      expect(carry("bundled").status).toBe(0);
+      // the names ShellRoute.pageFile and renderFile read (app/ios/OvisHomeCore/Sources/OvisHomeCore/Shell.swift)
+      const route = readFileSync(join(app, "ios/OvisHomeCore/Sources/OvisHomeCore/Shell.swift"), "utf8");
+      expect(route).toContain('public static let documentExtension = "shellpage"');
+      expect(readFileSync(inApp("shell/index.shellpage"), "utf8")).toContain('<meta name="ovis-shell"');
+      expect(readFileSync(inApp("shell/render.shellpage"), "utf8")).toBe("<!doctype html>");
+      expect(existsSync(inApp("shell/index.html"))).toBe(false);
+      expect(existsSync(inApp("shell/render.html"))).toBe(false);
+      expect(readFileSync(inApp("shell/assets/index-0123456789.js"), "utf8")).toBe("export {};");
+      expect(existsSync(inApp("shell-policy.json"))).toBe(true);
+      // what the build packed is left as it was, for the Android build
+      expect(existsSync(join(dir, "bundled-shell/shell/render.html"))).toBe(true);
+      // a second build replaces the copy instead of nesting it or keeping a file the new shell lacks
+      rmSync(join(dir, "bundled-shell/shell/assets/index-abcdefghij.css"));
+      expect(carry("bundled").status).toBe(0);
+      expect(existsSync(inApp("shell/assets/index-abcdefghij.css"))).toBe(false);
+      expect(existsSync(inApp("bundled-shell"))).toBe(false);
+      // while Xcode indexes it runs this phase too, beside a build of the same products folder: nothing is touched then
+      writeFileSync(inApp("left-by-the-build"), "");
+      expect(carry("bundled", "indexbuild").status).toBe(0);
+      expect(existsSync(inApp("left-by-the-build"))).toBe(true);
+      expect(carry("hosted", "indexbuild").status).toBe(0);
+      expect(existsSync(inApp("shell/index.shellpage"))).toBe(true);
+      const project = readFileSync(join(app, "ios/App/App.xcodeproj/project.pbxproj"), "utf8");
+      expect(project).toContain('\\"$TARGET_BUILD_DIR/$UNLOCALIZED_RESOURCES_FOLDER_PATH\\" \\"$ACTION\\"');
+      // a page the app has no route for fails the build, where it would otherwise sit under the app's own host as a page
+      writeFileSync(join(dir, "bundled-shell/shell/other.html"), "<!doctype html>");
+      const other = carry("bundled");
+      expect(other.status).toBe(1);
+      expect(other.stdout).toContain("holds a page the app does not know how to answer");
+      rmSync(join(dir, "bundled-shell/shell/other.html"));
+      // a hosted build of the same build folder carries none
+      expect(carry("hosted").status).toBe(0);
+      expect(existsSync(inApp(""))).toBe(false);
+      // and a bundled build with nothing to carry fails where the copy is made
+      rmSync(join(dir, "bundled-shell"), { recursive: true });
+      const none = carry("bundled");
+      expect(none.status).toBe(1);
+      expect(none.stdout).toContain("error: could not copy");
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("ends the iOS checks script with a failure when a test, a compile or a check fails, and says passed only when all did", () => {
+    // stand-ins for swift and swiftc, each failing when told to: the script itself is what is under test
+    const dir = mkdtempSync(join(tmpdir(), "ios-checks-"));
+    try {
+      writeFileSync(join(dir, "swift"), '#!/bin/sh\ncase "$*" in *"$FAIL_PACKAGE"*) [ -n "$FAIL_PACKAGE" ] && { echo "XCTAssertEqual failed"; exit 1; };; esac\necho "\t Executed 3 tests, with 0 failures (0 unexpected) in 0.001 (0.002) seconds"\n', { mode: 0o755 });
+      writeFileSync(join(dir, "swiftc"), `#!/bin/sh
+for last; do :; done
+case "$last" in */"$FAIL_COMPILE") echo "error: cannot find 'x' in scope"; exit 1;; esac
+if [ "$(basename "$last")" = "$FAIL_RUN" ]; then printf '#!/bin/sh\\necho "FAIL one check"\\nexit 1\\n' > "$last"; else printf '#!/bin/sh\\necho "all passed"\\n' > "$last"; fi
+chmod +x "$last"
+`, { mode: 0o755 });
+      const run = (env: Record<string, string> = {}) => spawnSync("sh", [join(app, "ios/check.sh")], { encoding: "utf8", env: { ...process.env, PATH: `${dir}:${process.env["PATH"] ?? ""}`, FAIL_PACKAGE: "", FAIL_COMPILE: "", FAIL_RUN: "", ...env } });
+      const passed = run();
+      expect(passed.stdout).toContain("the iOS app's checks passed");
+      expect(passed.stdout.split("Executed 3 tests").length - 1).toBe(3);
+      expect(passed.status).toBe(0);
+      for (const [env, says] of [
+        [{ FAIL_PACKAGE: "OvisHomeCore" }, "error: OvisHomeCore's tests failed"],
+        [{ FAIL_PACKAGE: "OvisPushCore" }, "error: OvisPushCore's tests failed"],
+        // a compile that fails: in front of `&&` it would be passed over, and the script would go on to say passed
+        [{ FAIL_COMPILE: "scope" }, "error: compiling the ScopePath check failed"],
+        [{ FAIL_COMPILE: "watch" }, "error: compiling the OpeningWatch check failed"],
+        // a check that runs and fails: in front of a pipe its failure would be the pipe's last command's success
+        [{ FAIL_RUN: "scope" }, "error: the ScopePath check failed"],
+        [{ FAIL_RUN: "watch" }, "error: the OpeningWatch check failed"],
+      ] as const) {
+        const failed = run(env);
+        expect(failed.stdout).toContain(says);
+        expect(failed.stdout).not.toContain("the iOS app's checks passed");
+        expect(failed.status).toBe(1);
+      }
+    } finally {
+      rmSync(dir, { recursive: true, force: true });
+    }
+  });
+
+  it("says on the app's own page that the app's own screens did not open, where that and not the internet is why", () => {
+    const script = readFileSync(join(app, "web/connect.js"), "utf8");
+    expect(script).toContain('const stuck = state.stuck === true;');
+    expect(script).toContain('t("Ovis\'s own screens did not open here", "Ovis 화면이 열리지 않았어요")');
+    // and offers no Try again for a copy the app will not serve
+    expect(script).toContain('document.getElementById("try-home").hidden = stuck && !fallback;');
+    expect(readFileSync(join(app, "ios/App/App/HerdrShellPlugin.swift"), "utf8")).toContain('"stuck": PCStore.shellStuck');
   });
 
   it("writes it where the Android and iOS builds read it, and removes it for a build without one", () => {

@@ -217,13 +217,18 @@ public final class SshPcs {
     }
 
     /// Whether the page loaded at `url` may open the SSH setup (HerdrShell openSshSetup): the app's own bundled pages
-    /// (`capacitor://localhost`) or the hosted app at `appOrigin` (the build's, https://app.ovis.sh in a store build),
-    /// never a PC's page.
+    /// (`capacitor://localhost`) or the shell at `appOrigin`, never a PC's page. The shell is the hosted app (the
+    /// build's, https://app.ovis.sh in a hosted build) or, in a build that serves it from inside the app, that host on
+    /// the app's own scheme (`capacitor://app.ovis.sh`): no other host there, and with no port.
     public static func setupOpener(_ url: URL?, appOrigin: URL?) -> Bool {
-        guard let url, let scheme = url.scheme?.lowercased(), let host = url.host?.lowercased() else { return false }
-        if scheme == "capacitor" { return host == "localhost" }
+        guard let url, let scheme = url.scheme?.lowercased(), let host = url.host else { return false }
+        // on the app's scheme a host is as it is written and has no port: another spelling is another origin to WebKit
+        if scheme == "capacitor" {
+            guard url.port == nil else { return false }
+            return host == "localhost" || (appOrigin?.scheme?.lowercased() == "capacitor" && appOrigin?.port == nil && host == appOrigin?.host)
+        }
         guard let appOrigin, appOrigin.scheme?.lowercased() == "https", let appHost = appOrigin.host?.lowercased() else { return false }
-        return scheme == "https" && host == appHost && (url.port ?? 443) == (appOrigin.port ?? 443)
+        return scheme == "https" && host.lowercased() == appHost && (url.port ?? 443) == (appOrigin.port ?? 443)
     }
 
     /// 256 random bits in hex: a tunnel's gate.
