@@ -404,6 +404,12 @@ describe("bun scripts/build-cache.ts", () => {
     writeFileSync(join(bin, "vite"), `#!/usr/bin/env node
 const fs = require("node:fs");
 fs.appendFileSync("node_modules/runs", "x");
+if (process.env.BUILD_GATE) {
+  const gate = require("node:child_process").spawnSync(process.execPath,
+    [process.env.BUILD_GATE, process.env.BUILD_RELEASE, process.env.BUILD_READY],
+    { timeout: 20000, stdio: "inherit" });
+  if (gate.status !== 0) process.exit(1);
+}
 fs.rmSync("dist", { recursive: true, force: true });
 fs.mkdirSync("dist");
 fs.writeFileSync("dist/index.html", fs.readFileSync("main.ts", "utf8") + (process.env.VITE_FLAG ?? ""));
@@ -545,6 +551,80 @@ echo "container-of-$slot true 2026-11-10T12:00:00.5Z"
     for (const { copy } of jobs) expect(readFileSync(join(copy, "dist/index.html"), "utf8")).toBe("export const a = 1;\n");
     expect(readdirSync(cache).filter((name) => name.startsWith(".lock-"))).toEqual([]);
     expect(runs()).toBe(0);
+  }, 60_000);
+
+  it("restores a build published between the contender's cache miss and lock acquisition (#4159)", async () => {
+    const { root, runs } = project();
+    const contender = clone(root);
+    const gates = temp("ovis-build-cache-gates-");
+    const cache = join(gates, "cache");
+    const gate = join(gates, "gate.ts");
+    const preload = join(gates, "contender.cjs");
+    const firstReady = join(gates, "first-ready");
+    const firstRelease = join(gates, "first-release");
+    const secondReady = join(gates, "second-ready");
+    const secondRelease = join(gates, "second-release");
+    writeFileSync(gate, `
+      import { existsSync, watch, writeFileSync } from "node:fs";
+      import { dirname } from "node:path";
+      const [, , release, ready] = process.argv;
+      if (ready) writeFileSync(ready, "");
+      await new Promise((resolve) => {
+        const watcher = watch(dirname(release), check);
+        function check() {
+          if (!existsSync(release)) return;
+          watcher.close();
+          resolve();
+        }
+        check();
+      });
+    `);
+    // Pause only the retry: the real first mkdir meets the holder, and the zero wait budget
+    // makes the contender check the still-empty cache before trying to take the lock again.
+    writeFileSync(preload, `
+      const fs = require("node:fs");
+      const { basename } = require("node:path");
+      const mkdir = fs.mkdirSync;
+      let attempts = 0;
+      fs.mkdirSync = (path, ...args) => {
+        if (basename(path).startsWith(".lock-") && ++attempts === 2) {
+          const gate = require("node:child_process").spawnSync(process.execPath,
+            [${JSON.stringify(gate)}, ${JSON.stringify(secondRelease)}, ${JSON.stringify(secondReady)}],
+            { timeout: 20000, stdio: "inherit" });
+          if (gate.status !== 0) process.exit(1);
+        }
+        return mkdir(path, ...args);
+      };
+      require("node:module").syncBuiltinESMExports();
+    `);
+    const waitFor = async (path: string): Promise<void> => {
+      const waiter = Bun.spawn([process.execPath, gate, path], { env: process.env, timeout: 15_000 });
+      expect(await waiter.exited, path).toBe(0);
+    };
+    const first = Bun.spawn([process.execPath, script], {
+      cwd: root, env: buildEnv(cache, { BUILD_GATE: gate, BUILD_RELEASE: firstRelease, BUILD_READY: firstReady }),
+      stdout: "pipe", stderr: "inherit", timeout: 30_000,
+    });
+    let second: typeof first | undefined;
+    try {
+      await waitFor(firstReady);
+      second = Bun.spawn([process.execPath, "--preload", preload, script], {
+        cwd: contender.copy, env: buildEnv(cache, { OVIS_BUILD_CACHE_WAIT_SECONDS: "0" }),
+        stdout: "pipe", stderr: "inherit", timeout: 30_000,
+      });
+      await waitFor(secondReady);
+      writeFileSync(firstRelease, "");
+      expect(await first.exited, await new Response(first.stdout).text()).toBe(0);
+      writeFileSync(secondRelease, "");
+      expect(await second.exited, await new Response(second.stdout).text()).toBe(0);
+      expect([runs(), contender.runs()]).toEqual([1, 0]);
+      expect(readFileSync(join(contender.copy, "dist/index.html"), "utf8")).toBe("export const a = 1;\n");
+    } finally {
+      // Unblock both gates before draining children, even if an assertion failed.
+      writeFileSync(firstRelease, "");
+      writeFileSync(secondRelease, "");
+      await Promise.all([first.exited, second?.exited]);
+    }
   }, 60_000);
 
   it("on the runner, writes only its own outbox, never the cache", () => {
