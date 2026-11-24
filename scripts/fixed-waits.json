@@ -41,7 +41,7 @@
   "server/session-history.test.ts": 1,
   "server/shell-agent.ts": 1,
   "server/system-stats.ts": 1,
-  "src/components/AccountSection.signInAddsPc.test.tsx": 8,
+  "src/components/AccountSection.signInAddsPc.test.tsx": 6,
   "src/lib/account/join.ts": 1,
   "tui/testing/herdr-capture.ts": 1
 }

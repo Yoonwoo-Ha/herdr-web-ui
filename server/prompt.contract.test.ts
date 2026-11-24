@@ -29,6 +29,7 @@ process.stdin.on("data", (chunk) => {
   if (/\\u001b[\\[O]B/.test(data)) cursor = Math.min(rows.length - 1, cursor + 1 + (drift ? 1 : 0));
   if (/\\u001b[\\[O]A/.test(data)) cursor = Math.max(0, cursor - 1);
   if (data.includes("\\r")) appendFileSync(out, rows[cursor] + "\\n");
+  if (data.includes("~")) appendFileSync(out, "input drained\\n");
   draw();
 });
 draw();
@@ -113,6 +114,19 @@ async function confirmed(target: Menu): Promise<string[]> {
   return chosen(target);
 }
 
+async function choicesBeforeBarrier(target: Menu): Promise<string[]> {
+  // The menu receives this on the same PTY as the answer keys, and logs it after any Enter.
+  await herdrRpc("pane.send_text", { pane_id: target.pane, text: "~" });
+  const deadline = performance.now() + 2_000;
+  while (performance.now() < deadline) {
+    const entries = chosen(target);
+    const mark = entries.indexOf("input drained");
+    if (mark !== -1) return entries.slice(0, mark);
+    await Bun.sleep(10);
+  }
+  throw new Error(`Pane ${target.pane} did not acknowledge the input barrier`);
+}
+
 async function card(target: Menu): Promise<{ id: string; kind: string; title: string; question: string; body: string | null; fallback?: true; options: { label: string }[] }> {
   for (let i = 0; i < 100; i++) {
     const { prompt } = await (await fetch(`${base()}/api/pane/prompt?pane_id=${encodeURIComponent(target.pane)}`)).json() as { prompt: any };
@@ -163,16 +177,14 @@ describe("answers to Claude's unnumbered menus", () => {
     expect(prompt.options).toHaveLength(2);
     const response = await answer(guessed, prompt.id, 1);
     expect(response.status).toBe(409);
-    await Bun.sleep(300);
-    expect(chosen(guessed)).toEqual([]);
+    expect(await choicesBeforeBarrier(guessed)).toEqual([]);
   });
 
   it("confirms nothing when the cursor moved past the row meanwhile", async () => {
     const prompt = await card(drifting);
     const response = await answer(drifting, prompt.id, 1);
     expect(response.status).toBe(409);
-    await Bun.sleep(300);
-    expect(chosen(drifting)).toEqual([]);
+    expect(await choicesBeforeBarrier(drifting)).toEqual([]);
   });
 
   it("refuses the id of a menu already answered once the same menu is asked again", async () => {
@@ -183,8 +195,7 @@ describe("answers to Claude's unnumbered menus", () => {
     expect(again.options).toEqual(prompt.options);
     expect(again.id).not.toBe(prompt.id);
     expect((await answer(twin, prompt.id, 0)).status).toBe(409);
-    await Bun.sleep(300);
-    expect(chosen(twin)).toEqual(["Yes, run it"]);
+    expect(await choicesBeforeBarrier(twin)).toEqual(["Yes, run it"]);
   });
 
   it("takes an answer to a fallback card whose screen only ticked since it was read", async () => {

@@ -118,14 +118,16 @@ sha256() { if command -v sha256sum >/dev/null 2>&1; then sha256sum "$1"; else sh
 
 # gh api, given 10 seconds: a gh that does not answer must not hold up an install that is done.
 # The watcher looks once a second, so it is gone soon after gh is; a gh that ignores TERM is killed.
+# OVIS_STAR_GH_TIMEOUT_SECONDS, OVIS_STAR_GH_KILL_GRACE_SECONDS and OVIS_STAR_READ_TIMEOUT_SECONDS
+# (offer_star) only let scripts/install-star.test.ts shorten these waits.
 gh_api() {
   gh api --hostname github.com "$@" </dev/null &
   gh_pid=$!
   (
     waited=0
-    while [ "$waited" -lt 10 ]; do sleep 1; kill -0 "$gh_pid" 2>/dev/null || exit 0; waited=$((waited + 1)); done
+    while [ "$waited" -lt "${OVIS_STAR_GH_TIMEOUT_SECONDS:-10}" ]; do sleep 1; kill -0 "$gh_pid" 2>/dev/null || exit 0; waited=$((waited + 1)); done
     kill -TERM "$gh_pid" 2>/dev/null || exit 0
-    sleep 2
+    sleep "${OVIS_STAR_GH_KILL_GRACE_SECONDS:-2}"
     kill -KILL "$gh_pid" 2>/dev/null || true
   ) >/dev/null 2>&1 &
   watch_pid=$!
@@ -171,7 +173,7 @@ offer_star() {
   trap 'echo; exit 0' INT
   printf '%s' "Ovis: star it now with the GitHub account gh is signed in to? [y/N] " >/dev/tty 2>/dev/null || { trap - INT; return 0; }
   # shellcheck disable=SC2016 # bash's variable, not this shell's
-  answer=$(bash -c 'read -r -t 20 answer </dev/tty && printf %s "$answer"' 2>/dev/null) || { answer=""; echo; }
+  answer=$(bash -c 'read -r -t "$1" answer </dev/tty && printf %s "$answer"' ovis-star "${OVIS_STAR_READ_TIMEOUT_SECONDS:-20}" 2>/dev/null) || { answer=""; echo; }
   trap - INT
   case "$answer" in
     y | Y | yes | Yes | YES) ;;

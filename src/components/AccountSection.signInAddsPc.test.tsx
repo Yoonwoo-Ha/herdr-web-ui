@@ -43,6 +43,7 @@ describe("signing in on a PC's own page", () => {
   let ended: AccountSession | undefined;
   let directoryWrites: string[];
   let boundOnDirectoryRead: boolean;
+  let membershipGate: { afterToken: boolean; requested: boolean; answered: boolean; release: Promise<void> } | undefined;
 
   beforeEach(() => {
     ahead = 0;
@@ -58,6 +59,7 @@ describe("signing in on a PC's own page", () => {
     asked = [];
     directoryWrites = [];
     boundOnDirectoryRead = false;
+    membershipGate = undefined;
     tab = new Map();
     userCode = null;
     for (const key of ["window", "document", "navigator", "indexedDB", "getComputedStyle", "location", "HTMLElement", "IS_REACT_ACT_ENVIRONMENT"]) descriptors.set(key, Object.getOwnPropertyDescriptor(globalThis, key));
@@ -91,7 +93,14 @@ describe("signing in on a PC's own page", () => {
         if (url.pathname === "/api/relay/start") { relay = "online"; return Response.json({ phase: "connecting", relay: "wss://relay.ovis.example", app: "https://app.ovis.example", sessions: 0, blocked: null, error: null }); }
         if (url.pathname === "/api/health") return Response.json({ ok: true, bridge_protocol: 1, auth: { required: false, authenticated: true, via: "loopback", role }, security: { pairing_gate: "closed", token_configured: false } });
         if (url.pathname === "/api/relay/link" && relay === "off") return Response.json({ error: { code: "relay_off", message: "Start the relay before pairing." } }, { status: 409 });
-        if (url.pathname === "/api/account/status") return Response.json({ account: pcAccount, unlinked: [], removals: [], adds: [], blocked: [] });
+        if (url.pathname === "/api/account/status") {
+          if (membershipGate?.afterToken) {
+            membershipGate.requested = true;
+            await membershipGate.release;
+            membershipGate.answered = true;
+          }
+          return Response.json({ account: pcAccount, unlinked: [], removals: [], adds: [], blocked: [] });
+        }
         if (url.pathname === "/api/relay/link") return Response.json({ url: OFFER, window_id: "1".repeat(32) });
         if (url.pathname === "/api/relay/link/close") return Response.json({ ok: true });
         return Response.json({ error: { code: "not_found", message: "no such route" } }, { status: 404 });
@@ -100,7 +109,12 @@ describe("signing in on a PC's own page", () => {
         ended ??= await indexedAccountStore.get("session");
         return Response.json({ error: { code: "unauthorized", message: "Sign in again" } }, { status: 401 });
       }
-      if (url.pathname === "/v1/token" && userCode !== null) { fake.approveOnLinkPage(userCode, ACCOUNT, approveWith); fake.approveDevice(userCode, ACCOUNT); userCode = null; }
+      if (url.pathname === "/v1/token" && userCode !== null) {
+        fake.approveOnLinkPage(userCode, ACCOUNT, approveWith);
+        fake.approveDevice(userCode, ACCOUNT);
+        userCode = null;
+        if (membershipGate) membershipGate.afterToken = true;
+      }
       const method = input instanceof Request ? input.method : init?.method ?? "GET";
       if (url.pathname === `/v1/pcs/${SERVER}` && (method === "DELETE" || method === "PUT")) directoryWrites.push(method);
       if (url.pathname === "/v1/pcs" && method === "GET" && boundOnDirectoryRead) {
@@ -235,9 +249,11 @@ describe("signing in on a PC's own page", () => {
     await until(() => buttons().includes("Sign in again"));
     const before = asked.length;
     await press("Sign in again");
-    await until(() => !buttons().includes("Remove GitHub") && buttons().includes("Add this PC to my account"));
-    // fixed wait: proves that nothing is listed or opened after the sign-in again
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    // The list must reflect the completed removal, not the empty state while reloading.
+    await until(() => {
+      const screen = text(renderer!.root);
+      return screen.includes("Google, connected") && !screen.includes("GitHub, connected") && buttons().includes("Add this PC to my account");
+    });
     expect(buttons()).not.toContain("Stop waiting");
     expect(text(renderer!.root)).not.toContain("Signed in. Adding this PC to your account…");
     // Manage account's own device list reads this PC's devices; nothing writes to the PC or lists it
@@ -249,10 +265,15 @@ describe("signing in on a PC's own page", () => {
     await mount();
     await until(() => buttons().includes("Sign in"));
     expect(buttons()).not.toContain("Sign in and add this PC");
+    const { promise, resolve } = Promise.withResolvers<void>();
+    const gate = { afterToken: false, requested: false, answered: false, release: promise };
+    membershipGate = gate;
     await press("Sign in");
-    await until(() => buttons().includes("Sign out"));
-    // fixed wait: proves that nothing is listed or opened after the sign-in
-    await act(async () => { await new Promise((resolve) => setTimeout(resolve, 20)); });
+    await until(() => buttons().includes("Sign out") && gate.requested);
+    // Deliver the post-sign-in membership answer. Everything after it (this fake fetch, the answer's body, the fake
+    // IndexedDB session read, the state update) is microtasks only, so once a setImmediate runs the answer is applied.
+    await act(async () => { resolve(); await new Promise<void>((done) => { setImmediate(done); }); });
+    expect(gate.answered).toBe(true);
     expect(links()).toHaveLength(0);
     expect(buttons()).not.toContain("Stop waiting");
     expect(buttons()).not.toContain("Add this PC to my account");
