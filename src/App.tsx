@@ -1202,7 +1202,8 @@ export function App() {
         {prompts.length > 0 && <RelayPairingPrompt pairings={prompts} />}
         {/* an account join a member could approve too: this PC's own window asks for the number itself (OwnJoinCard) */}
         {ownWindow && locked === false && <OwnJoinCard joins={ownJoins} onDecided={rereadOwnJoins} />}
-        {remotePairings.length > 0 && <AccountApprovals pairings={remotePairings} />}
+        {/* always there: it keeps what an approval left to say after its request is gone from this PC */}
+        <AccountApprovals pairings={remotePairings} />
         {pairedNotices.length > 0 && <DevicePairedNotice events={pairedNotices} onDismiss={dismissPairedNotice} onOpen={(event) => { dismissPairedNotice(event); setSettingsLinkPage("devices"); setSettingsOpen(true); }} />}
         {deviceNotices}
         {health !== null && <NewPcNotices enabled={machineSessions.peek("local")?.socket?.accountOpensAll() === true} ownWindowOf={ownWindowHere(health.auth) ? health.web_ui?.server_id : undefined} signIn={accountSignedIn ?? undefined} />}

@@ -21,7 +21,7 @@ describe("what the list and the account service's directory differ in", () => {
   it("compares nothing for a device that follows no list or is not in it", () => {
     const off: AccountListView = { account: ACCOUNT, reached: true, status: { at: "off" }, devices: [], pcs: [] };
     expect(shadowOf(off, [listed(1)], 5)).toBeNull();
-    expect(shadowOf({ ...off, status: { at: "not_in", list: "5c".repeat(32), why: "not_mine" } }, [listed(1)], 5)).toBeNull();
+    expect(shadowOf({ ...off, status: { at: "not_in", list: "5c".repeat(32), why: "not_mine", claim: "claimed" } }, [listed(1)], 5)).toBeNull();
     expect(shadowOf(following([1], "out"), [listed(1)], 5)).toBeNull();
   });
 

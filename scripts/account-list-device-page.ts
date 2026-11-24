@@ -5,7 +5,8 @@
 import { LIST_LEVEL, kindBody, namesFields, replayList, sealEpoch, signListEntry } from "../shared/account-list.ts";
 import { entryToText, signEntry } from "../shared/account-list-entry.ts";
 import { openWrap, sealFields, wrapEpochKey, wrapFromText, wrapToText } from "../shared/account-list-seal.ts";
-import { accountList, type AccountListView } from "../src/lib/account/accountList.ts";
+import { accountList, type AccountListView, type ListOffer } from "../src/lib/account/accountList.ts";
+import { allowDevice, type AllowOutcome, type Newcomer } from "../src/lib/account/listAllow.ts";
 import { deviceListKeys } from "../src/lib/account/listKeys.ts";
 import { readWraps } from "../src/lib/account/listNames.ts";
 import { LIST_RECORDS, indexedListStore } from "../src/lib/account/listStore.ts";
@@ -121,4 +122,19 @@ export async function entryAt(at: { readonly list: string; readonly seq: number;
   const keys = await deviceListKeys(indexedAccountStore);
   const body = kindBody({ issued_at: Math.floor(Date.now() / 1000), list: at.list, prev: at.prev, seq: at.seq, signer: keys.key }, { kind: "carried", endpoint, sealed: null });
   return entryToText(await signEntry(body, keys.signs));
+}
+
+/** This device's member key, as a device that lets it in is given it by the comparing of digits. */
+export async function memberKey(): Promise<string> {
+  return (await deviceListKeys(indexedAccountStore)).key;
+}
+
+/** This device lets another in: the `device` entry is signed with the member key IndexedDB holds, through the kinds' writer. */
+export function allow(newcomer: Newcomer): Promise<AllowOutcome> {
+  return allowDevice(list, newcomer);
+}
+
+/** This device takes the place a member handed it. */
+export function adopt(offer: ListOffer): Promise<AccountListView> {
+  return list.adopt(offer);
 }

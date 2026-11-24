@@ -85,3 +85,37 @@ export function genesisBody(entry: string, wrap: { readonly member: string; read
   if (!isListKeyEncoding(wrap.member) || wrap.wrap.length !== LIST_WRAP_TEXT_LENGTH) throw new RangeError("A genesis carries the wrap of epoch 0 for its own encryption key");
   return { entry, wraps: [{ epoch: 0, member: wrap.member, wrap: wrap.wrap }] };
 }
+
+/** A device's claim of its own key at the account service, as another device reads it: the key, its encryption key and its card. */
+export interface ListClaim {
+  readonly key: string;
+  readonly enc: string;
+  readonly card: string;
+}
+
+/** The most claims one answer may hold: the account service keeps one for each sign-in that waits. */
+const LIST_CLAIMS_MAX = 256;
+/** A card's signature as text. */
+const CARD_CHARS = 86;
+
+/**
+ * The claims an answer holds, each key once; null for an answer out of form. A claim is only where a card is found:
+ * the card proves itself, and which key is the person's new device is what the comparing of digits says.
+ */
+export function claimsOf(body: unknown): ListClaim[] | null {
+  if (!isRecord(body) || !Array.isArray(body.claims) || body.claims.length > LIST_CLAIMS_MAX) return null;
+  const claims = new Map<string, ListClaim>();
+  for (const claim of body.claims as readonly unknown[]) {
+    if (!isRecord(claim) || typeof claim.key !== "string" || !isListKeyEncoding(claim.key) || typeof claim.enc !== "string" || !isListKeyEncoding(claim.enc)
+      || typeof claim.card !== "string" || claim.card.length !== CARD_CHARS || claims.has(claim.key)) return null;
+    claims.set(claim.key, { key: claim.key, enc: claim.enc, card: claim.card });
+  }
+  return [...claims.values()];
+}
+
+/** An epoch key wrapped to one member, as a placement carries it. */
+export interface PlacedWrap {
+  readonly epoch: number;
+  readonly member: string;
+  readonly wrap: string;
+}

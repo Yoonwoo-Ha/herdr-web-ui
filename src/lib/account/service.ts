@@ -11,7 +11,7 @@ import { newRecordId, pcAddSigningBytes, registerSigningBytes, type AccountRecor
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import { toBase64Url } from "../../../shared/relay-pair-sas.ts";
 import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
-import { genesisBody, hintOf, nowOf, pageOf, wrapsOf, type ListHint, type ListPage, type ListWrap } from "./listAnswers.ts";
+import { claimsOf, genesisBody, hintOf, nowOf, pageOf, wrapsOf, type ListClaim, type PlacedWrap, type ListHint, type ListPage, type ListWrap } from "./listAnswers.ts";
 import type { PcProofFields } from "./pcProof.ts";
 import type { AccountKey, AccountLock, AccountProvider, AccountSession, AccountStore } from "./store.ts";
 import { ACCOUNT_PROVIDERS, accountLock, indexedAccountStore } from "./store.ts";
@@ -517,9 +517,9 @@ export class AccountService {
    * service gives no challenge (404: one from before key proofs, or Step 2 off; 403 `own_sign_in_required`: a device code's
    * sign-in, which the add then refuses as before).
    */
-  private async pcAddProof(session: AccountSession, key: AccountKey, purpose: PcAddPurpose, serverId: string, listingId: string, signal?: AbortSignal, again?: SendAgain): Promise<PcAddProof | null> {
+  private async pcAddProof(session: AccountSession, key: AccountKey, purpose: PcAddPurpose, serverId: string, listingId: string, signal?: AbortSignal, again?: SendAgain, only?: number): Promise<PcAddProof | null> {
     let issued: unknown;
-    try { issued = await this.call("POST", "/v1/pcs/challenge", {}, signal, again); }
+    try { issued = await this.call("POST", "/v1/pcs/challenge", {}, signal, again, only); }
     catch (error) {
       const refused = error instanceof AccountServiceError && !(error instanceof AccountRefreshError);
       if (refused && (error.status === 404 || (error.status === 403 && error.code === "own_sign_in_required"))) return null;
@@ -537,14 +537,14 @@ export class AccountService {
    * registered no key; else pcAddProof over the listing `listing` names, read only then (null: this call adds nothing, and
    * proves nothing). One proof per call.
    */
-  private async addProof(purpose: PcAddPurpose, serverId: string, listing: () => Promise<string | null>, signal?: AbortSignal, again?: SendAgain): Promise<PcAddProof | null> {
+  private async addProof(purpose: PcAddPurpose, serverId: string, listing: () => Promise<string | null>, signal?: AbortSignal, again?: SendAgain, only?: number): Promise<PcAddProof | null> {
     const session = await this.bound();
     const age = session.signed_in_at === undefined ? Number.NaN : this.now() - session.signed_in_at;
     if (age >= 0 && age <= PC_ADD_FRESH_MS) return null;
     const key = await this.registeredKey(session);
     if (key === null) return null;
     const listingId = await listing();
-    return listingId === null ? null : this.pcAddProof(session, key, purpose, serverId, listingId, signal, again);
+    return listingId === null ? null : this.pcAddProof(session, key, purpose, serverId, listingId, signal, again, only);
   }
 
   /**
@@ -823,6 +823,44 @@ export class AccountService {
     const wraps = wrapsOf(await this.listCall("GET", `/v2/lists/${list}/wraps?member=${encodeURIComponent(member)}`, undefined, signal));
     if (wraps === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no wraps");
     return wraps;
+  }
+
+  /**
+   * Says that `card.key` is this sign-in's own member key, with the card it made for `list` (`POST
+   * /v2/lists/{list}/claims`): the account service places a `device` entry for a key only while such a claim is at
+   * most ten minutes old, so a member's signature alone lets nobody in. From an own sign-in made in the last ten
+   * minutes, or older with a proof by its registered key (purpose `list-claim`, over the list id and the claimed key).
+   * Claimed again, it is renewed.
+   */
+  async claimListKey(list: string, card: { readonly key: string; readonly enc: string; readonly card: string }, signal?: AbortSignal): Promise<void> {
+    // asked by the device itself, as the list's own routes are: the challenge is sent once, and no answer to it ends the sign-in
+    const proved = (): Promise<PcAddProof | null> => this.addProof("list-claim", list, async () => card.key, signal, SENT_ONCE, 200);
+    const send = (proof: PcAddProof | null) => this.proving(proof, () => this.listCall("POST", `/v2/lists/${list}/claims`, proof === null ? card : { ...card, key_proof: proof }, signal));
+    const proof = await proved();
+    try { await send(proof); }
+    catch (error) {
+      // the proof's challenge was spent or ran out on the way: one more, made anew
+      if (proof === null || !(error instanceof AccountServiceError && error.status === 400 && error.code === "challenge_invalid")) throw error;
+      await send(await proved());
+    }
+  }
+
+  /** The claims of the list that still stand (`GET /v2/lists/{list}/claims`): where a device that lets another in finds its card. */
+  async listClaims(list: string, signal?: AbortSignal): Promise<ListClaim[]> {
+    const claims = claimsOf(await this.listCall("GET", `/v2/lists/${list}/claims`, undefined, signal));
+    if (claims === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no claims");
+    return claims;
+  }
+
+  /**
+   * Places entries at the list's head, whole or not at all, with the wraps that go with them (`POST
+   * /v2/lists/{list}/entries`). The answer says nothing a member relies on: its own entry is in its copy only when
+   * the log shows it. A refusal is thrown as the account service's: `409 head_moved` (read and sign again),
+   * `400 entry_refused` with its `reason`, `403 not_claimed`, `429 entry_budget`, `503 list_rebuilding` (the same
+   * request again), `503 list_stopped`.
+   */
+  async placeEntries(list: string, entries: readonly string[], wraps: readonly PlacedWrap[], signal?: AbortSignal): Promise<void> {
+    await this.listCall("POST", `/v2/lists/${list}/entries`, wraps.length === 0 ? { entries } : { entries, wraps }, signal);
   }
 
   /**

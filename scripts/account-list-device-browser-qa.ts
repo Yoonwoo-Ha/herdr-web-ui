@@ -3,7 +3,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright-core";
 import { LIST_LEVEL, listView, replayList } from "../shared/account-list.ts";
 import { FakeAccountService } from "../shared/account-service-fake.ts";
-import { askingPc, postPcKeys } from "../src/lib/account/accountList.fixture.ts";
+import { askingPc, postPcKeys } from "../src/lib/account/accountList.test-helpers.ts";
 import type { AccountSession } from "../src/lib/account/store.ts";
 import { chromePath } from "./chrome-path.ts";
 
@@ -128,6 +128,33 @@ try {
     assert.equal(wire.asked.filter((route) => route === "POST /v2/lists").length, 1, "one tab signs and sends the genesis; the other finds it saved");
     await race.close();
     console.log("PASS two tabs in Chromium: one genesis is signed and sent, and both tabs follow it");
+
+    // A second device of the account, in a browser profile of its own, is let in by the first and follows from the place it is handed.
+    const other = await browser.newContext();
+    const tablet = await other.newPage();
+    await tablet.goto(origin);
+    await signIn(tablet, ACCOUNT);
+    const waiting = await sync(tablet);
+    assert.deepEqual(waiting.status, { at: "not_in", list: held.id, why: "not_mine", claim: "claimed" });
+    const tabletKey = await tablet.evaluate(async (path) => ((await import(path)) as Page).memberKey(), MODULE);
+    const outcome = await second.evaluate(async ({ path, key }) => ((await import(path)) as Page).allow({ key, label: "QA tablet", os: "android" }), { path: MODULE, key: tabletKey });
+    assert.ok(outcome.allowed, `the first device lets the second in: ${outcome.allowed ? "" : outcome.why}`);
+    const now = fake.accountList(ACCOUNT)!;
+    assert.deepEqual(outcome.offer, { list: held.id, seq: now.head.seq, hash: now.head.hash });
+    assert.equal((await sync(tablet)).status.at, "not_in", "the service's word alone lets it follow nothing");
+    const joined = await tablet.evaluate(async ({ path, offer }) => ((await import(path)) as Page).adopt(offer), { path: MODULE, offer: outcome.offer });
+    assert.equal(joined.status.at === "following" ? joined.status.standing : joined.status.at, "in");
+    assert.deepEqual(joined.devices.map((row) => [row.self, row.name?.label]), [[false, "QA phone"], [true, "QA tablet"]]);
+    assert.deepEqual(joined.pcs.map((pc) => pc.name?.label), ["Desk in the study", "Laptop"]);
+    // and after a reload of the second device, from its own storage
+    await tablet.close();
+    wire.away = true;
+    const tabletAgain = await other.newPage();
+    await tabletAgain.goto(origin);
+    assert.deepEqual(await sync(tabletAgain), { ...joined, reached: false });
+    wire.away = false;
+    await other.close();
+    console.log("PASS letting a device in, in Chromium: the first device signs the second in with its stored key, and the second follows from the place it is handed, also after a reload");
   } finally {
     await browser.close();
   }

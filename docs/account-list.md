@@ -1003,6 +1003,8 @@ In an IndexedDB database of its own, `ovis-account-list`, by account:
 | `shadow` | what the copy and the directory differed in |
 | `asked` | when the account service last said that it keeps no list for the account |
 | `dropped` | the ids of the entries 0 this device signed and gave up for good |
+| `offer` | the place in a list that a member who let this device in handed it, until the log shows it |
+| `times` | when the copy was last read in full, and the floor of the device's clock, for the list it names |
 
 - **No key is in it.** An epoch key is never stored: each page opens the wraps again with the
   device's encryption key and holds the keys in memory. So what is kept is text and numbers, and a
@@ -1092,8 +1094,8 @@ not in the list), and `never` starts none; both are for testing.
 
 ### What a device writes after entry 0
 
-Not built yet: so far a device writes entry 0 and nothing else. The rules its writer keeps, so
-that they are in one place when it is built:
+So far a device writes entry 0 and the entry that lets another device in
+([Letting a device in](#letting-a-device-in)). The rules its writer keeps, for every entry:
 
 - **Only through the kinds' writer** (`signListEntry`, `signListEntries`), which builds an entry on
   the device's own footing and signs it only when it would count there. An entry that would not
@@ -1112,15 +1114,19 @@ that they are in one place when it is built:
   where `sealEpoch` says no right before it (`epoch_not_needed` otherwise), and for an invite or a
   device whose time is over only directly after its `remove` (`epoch_no_use`). A device never
   opens one for any other reason, and after a request that was not placed it makes the next
-  epoch's key anew: none of that request's wraps were kept. The service judges by its own clock,
-  so right at an `exp` or an `until` its answer and the device's can differ for a moment:
-  `epoch_not_needed` and `epoch_stale` mean "read and sign again", not a fault.
-- **It dates an entry by its own clock, and no later than the account service's.** The service
-  takes no entry dated more than ten minutes ahead of its clock, and the list's own time never
-  goes back, so a device whose clock runs ahead uses the time the service's last answer carried.
-- **What the service answers a placement** besides taking it: `409 head_moved` (read, sign
-  again), `503 list_rebuilding` (the same request again, the same signatures), `429 entry_budget`
-  (wait as long as it says), and `503 list_stopped`, which is told in these words and never as a
+  epoch's key anew: none of that request's wraps were kept.
+- **It judges time by its own clock and dates an entry by it**: its clock, held against the floor
+  it saved and the list's own time (`memberClock`). The account service's clock decides nothing
+  and is never signed. The service judges by its own, so its answer and the device's can differ:
+  `epoch_not_needed`, `epoch_stale`, `epoch_no_use` and `issued_at_ahead` then end the write with
+  nothing else signed, and the device says that its clock looks wrong.
+- **One signature per place.** A request that was signed goes again as it is while the device's
+  own copy shows the head it was signed on; another is signed only after the copy shows a new
+  head. One request holds 16 entries at most.
+- **What the service answers a placement** besides taking it: `409 head_moved` (read; sign again
+  only on a head that did move), `503 list_rebuilding` and `409 try_again` (the same request
+  again, the same signatures), `429 entry_budget` (wait as long as it says), and
+  `503 list_stopped`, which is told in these words and never as a
   removal: "The account service cannot change the list right now. To remove a device, use Revoke
   on each PC."
 - **A device of power `full` that is in front does that tidying by itself** when it sees such an
@@ -1131,13 +1137,142 @@ that they are in one place when it is built:
   the service lets one PC join with it whatever the entry's `uses` say. So the device writes
   `uses` 1 and offers no other number.
 
+### Letting a device in
+
+A new device of the account is let into the list by a device that is in it. The person does what
+they do today ([Who may admit a device](account.md#who-may-admit-a-device)): the new device asks
+through a PC, a device in use shows **Add a new device?**, the person picks the number the new
+device shows, and the new device confirms. What the list adds is under that.
+
+**The new device, before anybody lets it in.** It is signed in, the account service names a list,
+and entry 0 of it is not its own. It then claims its own key at the account service
+(`POST /v2/lists/{list}/claims`): its member key, its encryption key and its card for that list.
+The service places no entry for a key without such a claim by a sign-in of the account, at most
+ten minutes old, so the device makes the claim again every four minutes while it waits. A sign-in
+older than ten minutes proves itself with its registered key (purpose `list-claim`, over the list
+id and the claimed key); one that registered none signs in again.
+
+**The device that lets it in.** Once the PC took the number (it checks the digits, as today), and
+once the PC holds the new device's row (the new device confirmed its own digits: until then the
+PC answers `404 introduction_unknown_key` to an introduction with nothing in it, which is what
+the device asks with), and only then:
+
+1. It reads the list, so that it signs on what the log holds now. The write belongs to the account
+   the approval was begun under and to the list of this first read: a sign-in another tab changed
+   meanwhile ends it with nothing signed, and never leads to the way of an account with no list.
+   Whether the device goes by a list at all is read from what it holds itself (the copy in its
+   own store): with none, the approval goes as before lists, at once, and waits for no answer
+   about lists. With one, the device never takes the ways from before lists, whatever its
+   standing: put out, stopped, alarmed or unread each say so before anything goes to the PC.
+2. It takes the newcomer's card from the claims the service lists
+   (`GET /v2/lists/{list}/claims`), for the key whose digits were compared. The key comes from
+   the comparing, never from that answer; the card proves itself, and an entry whose card is not
+   that key's is not signed.
+3. It signs a `device` entry for that key, power `full` and role `drive`, with the name the new
+   device gave sealed under the current epoch, through the kinds' writer. Where an invite's or a
+   device's time is over, the tidying comes first in the same request
+   ([What a device writes after entry 0](#what-a-device-writes-after-entry-0)).
+4. It places the request with the epoch key wrapped to the newcomer
+   (`POST /v2/lists/{list}/entries`).
+5. It reads the list again. The newcomer is in when the device's own copy shows the entry at its
+   place, whatever the service answered to the placement, and still holds the newcomer's key as
+   in: where another member put it out meanwhile, nothing more is signed for it.
+
+**One signature per place.** A request is kept in the device's own store, under the account, the
+member key and the head it was signed on, before it is sent. While the device's copy shows that
+head, that request is the only one that goes: from this call or a later one (**Try again**), from
+this page or another, whatever is asked for by then. Two pages that sign at one head keep one
+request, the first, and the other page's signature is never sent. The request is let go only
+when the account service's own refusal proved that it placed nothing, and a request kept from
+before that is placed or let go makes way for what was asked: it is signed on the head that
+follows. Within one call the request goes again, with the same signatures, three
+times at most, while the device's own copy shows the head it was signed on: while the service
+says it is rebuilding the list (`503 list_rebuilding`) or asks for the request again, after an
+answer that never came, and while the log does not show the entry. Another entry is signed only
+after the device's own copy shows a new head (`409 head_moved`, and the read that follows shows
+it), four times at most. Only an answer that proves that nothing was placed is taken as that: the
+service's own refusals below 500. After an answer that never came, a 5xx (a gateway may answer one
+after the service placed the entry) or a 200 that does not read, the device reads the log past its
+own head, whatever head the service names, before it says anything: the entry is there, or the
+request goes again, or, where the log cannot be read either, it says that it is **not known yet**
+whether the device is in the account. It never says "added to this PC only" for that. A placement
+waits thirty seconds for its answer, and the read of the claims as long.
+
+**Whose clock.** Two clocks, two jobs. What is *signed* (the time an entry is dated, whose time
+is over and so whether a removal and a new epoch go first, what is sealed and wrapped) goes by the
+device's own clock as it is now, held against the list's own time and nothing else. The latest
+time the device saved (its floor) is not used for it: a floor that a date set ahead once pushed
+forward would otherwise sign the removal of a key whose time is not over, and a removal cannot be
+undone. The floor is for what can be undone: whom the device lets in, refuses and shows as over.
+A device whose clock reads more than ten minutes under its own floor cannot tell which of the two
+is wrong: it signs nobody out for a time that is over, so no epoch is opened and the newcomer
+comes in with no name until a later writer seals one. The account service's clock decides nothing
+and is never signed. Where the service refuses a request for its time or its epoch, the device
+signs nothing else and says that its clock looks wrong.
+
+**No request over sixteen entries.** The request that lets a device in holds the removal of
+everybody who is over their time, the epoch and the device. Where more are over their time than
+fit beside those two, they go out first, sixteen removals a request, four such requests at most,
+and the device's request follows on the head they leave.
+
+**A device that is behind.** Once a member of a later level has written, this build lets nobody in
+on what it holds (the kinds refuse the entry, `behind`): the request is not sent, and the device
+says to update Ovis on it. It still removes.
+
+It gives up, and says why, where the service holds no claim of that key, where the list put that
+key out before (a key that is out never comes back), where the list took as many additions as it
+takes for now (with the wait the service named), where the service cannot change the list, and
+where the device itself may not write: it follows a list and is not in it with power `full`, was
+shown another history, stopped at an entry this build cannot place, or cannot read its copy. That
+last one is never taken for "the account has no list": nothing of the ways from before lists is
+signed for the newcomer then.
+
+**The place handed over.** The device that let the newcomer in hands it the list id and the place
+of the newcomer's own entry (`seq` and hash), in the introduction it leaves with the PC
+([Introductions](account.md#introductions)): `POST /api/account/introduce` carries `list`:
+`{ "id", "seq", "hash" }`, and `GET /api/account/introduction` gives it to the new device over
+its own session. The PC only carries it. The new device reads it with the introduction, over the
+session that signed in with its account key, for a minute after the approval (a Forget of the
+pairing ends that), and then follows that list when the log shows its own key let in at that place or
+before it: an entry that lets it in only after the place it was handed is not what the member
+vouched for. The copy is saved before the place is forgotten, so a save that fails keeps the
+place. A log that ends before that place, or shows another entry there, is followed by nobody:
+the device keeps the place it was handed and reads again at its own pace. Being handed a place
+ends the search for one and says nothing more: the new device says **In your account** only once
+its own copy shows it in. So a new device takes
+the list from a member, through the one PC it compared digits with, and never from the account
+service. A device that follows a list takes no place from anybody. A PC that does not carry the
+place yet (it keeps the introduction's PCs and drops what else it is sent) hands the new device
+none: that device then stays let in at that PC alone, waiting, and is in the list without
+following it until a PC carries its place.
+
+**The PC.** The device that let the newcomer in also hands the PC the list's new entries, so that
+the PC need not wait for its next read: it says where it stands
+(`POST /api/account/list/head`), and where the PC stands earlier in the same history, hands it
+the entries after that place (`POST /api/account/list/page`), 256 a call. Where the PC asks for
+an earlier place (`asks`), that page goes next, eight calls at most. The hand-over counts as
+done only when the PC says it stands at the newcomer's entry or past it, at a place of the
+device's own history: the same number with another entry at it is another history. A page the PC
+refused or took in part is none, whatever place its answer names, and the PC then reads the
+account service as ever. Only pages of the list the hand-over began for are sent. Entries prove
+themselves. A PC that follows no list a person named answers 404, and nothing is handed.
+
+**Where the list does not take the newcomer**, the device signs nothing else for it: no `add` for
+the account's other PCs, and no PC is introduced. The new device stays let in at that PC alone, and
+the device in use says so on a card, **{device} was added to {pc} only**, with why and **Try
+again**.
+
+**An account with no list, and a device that is in none**, do exactly what they did: the `add`
+and the introduction of [Introductions](account.md#introductions), and nothing of the above.
+
 ### Which list it follows
 
 Never the one the account service names, on that word alone. A device follows a list only when
 
 - entry 0 with that id is a `genesis` of its own account, signed with its own member key (it
   started the list, in this page or another), or
-- a member that let it in handed it the list id and its own head (not built yet).
+- a member that let it in handed it the list id and its own place in it, and the log shows this
+  device's key let in, up to that very entry ([Letting a device in](#letting-a-device-in)).
 
 A device that follows a list keeps to it. A service that names another list for the account
 changes nothing the device holds, and the device says so (`other_list`). A service that names none
@@ -1146,8 +1281,8 @@ list by its id, so that an entry which puts somebody out still reaches it.
 
 A device that follows none asks for entry 0 of the list the service names, and for nothing else of
 it. It is `not_in` that list, for one of three reasons: the entry is that list's and is not its
-own (`not_mine`: it waits to be let in, and does not ask for the entry again while the service
-names that list); the service did not show the entry with that id (`unread`: it asks again in five
+own (`not_mine`: it waits to be let in, keeps its claim of its own key standing, and does not ask
+for the entry again while the service names that list); the service did not show the entry with that id (`unread`: it asks again in five
 minutes, and keeps a genesis it signed); or the entry is in a form this build cannot read
 (`needs_newer_client`).
 
@@ -1185,8 +1320,9 @@ in between. A round whose first page does not come counts as one that did not re
 read, in one IndexedDB transaction; where another page saved meanwhile, nothing is written and the
 round reads what is saved now and takes its pages again, three times at most. That holds in a
 browser without Web Locks too, and it is what keeps an alarm one page saved from being written
-over by another. The time of the last full read and the floor of the clock are saved with every
-round that reached the service, so a page loaded again knows both.
+over by another. The time of the last full read and the floor of the clock move with every round
+that reached the service: they are kept in a small record of their own (`times`), so such a round
+does not write a long copy again, and a page loaded again takes the later of the two.
 
 An account service that is away, slow, or off its switch again leaves the copy as it is: the
 device shows what it saved, and says that it did not reach the service.
@@ -1238,6 +1374,11 @@ once it goes by the list:
   each with its name where it opens. Nobody is listed unless the device follows the list and is in
   it.
 - `holdsPc(relay key)` and `pcOfKey(signing key)`: whether that PC is in the list.
+- `adopt(place)`: takes the place a member handed this device. `writer()`: what an entry is signed
+  on (the device's state, its keys, the epoch keys it holds), or none for a device that may not
+  sign. A device of power `bound` has one only for the removal of its own key
+  (`writer({ self: true })`), which the signers' rules let any signer write. `gossip()` and `pageAfter(place, limit)`: where the device stands, and its entries after a
+  place, for another member.
 - `subscribe`, `sync` (one read now), `due` (when the next read is due), `forget` (a person's reset).
 
 ### Compared with the directory
