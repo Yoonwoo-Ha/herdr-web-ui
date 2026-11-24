@@ -1,10 +1,10 @@
-import { afterEach, describe, expect, test } from "bun:test";
+import { afterEach, describe, expect, spyOn, test } from "bun:test";
 import { mkdtempSync, readdirSync, readFileSync, rmSync, statSync, utimesSync, writeFileSync } from "node:fs";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { isListKeyEncoding, isListPoint, verifySignature } from "../../shared/account-list-entry.ts";
 import { cardHolds, signCard } from "../../shared/account-list.ts";
-import { ACCOUNT_LIST_KEYS_FILE, forgetListKeys, ListKeysError, ListKeyStore, listKeysPath } from "./list-keys.ts";
+import { ACCOUNT_LIST_KEYS_FILE, forgetListKeys, ListKeysError, listKeysFs, ListKeyStore, listKeysPath } from "./list-keys.ts";
 
 const PC_A = "5f1d0c2e9ab34c7781e6f0a2b3c4d5e6";
 const PC_B = "00112233445566778899aabbccddeeff";
@@ -14,6 +14,32 @@ const ENDPOINT = "8f40c5adb68f25624ae5b214ea767a6ec94d829d3d7b5e1ad1ba6f3e213828
 const dirs: string[] = [];
 afterEach(() => { for (const dir of dirs.splice(0)) rmSync(dir, { recursive: true, force: true }); });
 const stateDir = () => { const dir = mkdtempSync(join(tmpdir(), "list-keys-")); dirs.push(dir); return dir; };
+
+describe("the lock beside the keys file, and a store that was closed", () => {
+  test("a stale lock that cannot be deleted ends the wait with an error, and spins nothing", async () => {
+    const dir = stateDir();
+    const lock = `${listKeysPath(dir)}.lock`;
+    writeFileSync(lock, "");
+    utimesSync(lock, new Date(Date.now() - 60_000), new Date(Date.now() - 60_000));
+    const stuck = spyOn(listKeysFs, "unlinkSync").mockImplementation(() => { throw Object.assign(new Error("read-only"), { code: "EROFS" }); });
+    const began = performance.now();
+    try { await expect(new ListKeyStore(dir, 300).keysFor(PC_A)).rejects.toThrow(ListKeysError); } finally { stuck.mockRestore(); }
+    expect(performance.now() - began).toBeLessThan(5_000);
+    expect(readdirSync(dir)).toEqual([`${ACCOUNT_LIST_KEYS_FILE}.lock`]);
+  });
+
+  test("a store that was closed makes no keys, and still reads the ones on disk", async () => {
+    const dir = stateDir();
+    const closed = new ListKeyStore(dir);
+    closed.close();
+    await expect(closed.keysFor(PC_A)).rejects.toThrow(ListKeysError);
+    expect(readdirSync(dir)).toEqual([]);
+    const keys = await new ListKeyStore(dir).keysFor(PC_A);
+    const again = new ListKeyStore(dir);
+    again.close();
+    expect((await again.keysFor(PC_A)).key).toBe(keys.key);
+  });
+});
 
 describe("the PC's list keys (account-list-keys.json)", () => {
   test("the first use makes a signing key and an encryption key, in a file only this user reads", async () => {

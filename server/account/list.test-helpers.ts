@@ -2,7 +2,7 @@
  * A test account's signed list at the fake account service: members that sign real entries and place them through
  * the service's own routes, so a PC under test reads what a real account would hold.
  */
-import { entryFromText, entryHash, entryToText, signEntry } from "../../shared/account-list-entry.ts";
+import { entryFromText, entryHash, entryToText, signEntry, type EntryBody } from "../../shared/account-list-entry.ts";
 import { epochKeyCommitment, generateStoredEncryptionKey, newEpochKey } from "../../shared/account-list-seal.ts";
 import { kindBody, signCard, type ListKind, type ListRole } from "../../shared/account-list.ts";
 import type { ListPlace } from "../../shared/account-list-signers.ts";
@@ -58,6 +58,30 @@ export class TestList {
     const text = entryToText(await signEntry(body, signer.keys.privateKey));
     if (after === undefined) this.head = { seq: place.seq + 1, hash: entryHash(entryFromText(text).body) };
     return text;
+  }
+
+  /**
+   * An entry of a kind this build does not know, as a member with a newer Ovis writes one after the last entry: a
+   * reader of this build is behind from it on. Nothing is placed (the fake is of this build too, and places none): a
+   * test has the service show it (tamperList `inject`). `after`: the entry it follows, the last one by default.
+   */
+  async signLater(signer: ListMember = this.first, after: ListPlace = this.head): Promise<string> {
+    const place = after;
+    const body = { issued_at: this.clock(), list: this.id, prev: place.hash, seq: place.seq + 1, signer: signer.key, own: [], kind: "later_kind", v: 2 } as unknown as EntryBody;
+    return entryToText(await signEntry(body, signer.keys.privateKey));
+  }
+
+  /**
+   * Another history from entry 0, which is a fork to whoever is shown it: the first device lets in a device nobody
+   * saw, and that device signs on it. (The first entry alone would be what a member signed and left behind when
+   * another entry got its place, which raises no alarm.) Nothing is placed, and the list's own head stays.
+   */
+  async forkFromStart(): Promise<{ readonly texts: readonly [string, string]; readonly device: ListMember }> {
+    const device = await listMember();
+    const first = await this.sign({ kind: "device", key: device.key, power: "full", role: "drive", until: null, enc: device.enc, card: await memberCard(device, this.id), sealed: null, rotates: false },
+      this.first, { seq: 0, hash: this.id });
+    const lived = await this.sign({ kind: "remove", ends: device.key }, device, { seq: 1, hash: entryHash(entryFromText(first).body) });
+    return { texts: [first, lived], device };
   }
 
   /** Places texts at the account service as one batch, from a sign-in of the account. */

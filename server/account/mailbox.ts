@@ -526,7 +526,9 @@ export class AccountMailbox {
     // an answer is for the binding and account it was asked for: one that came back to another names nothing
     const named = answer !== undefined && answer.binding === linked && answer.account === account ? answer.listing : undefined;
     const pinned = linked === null ? undefined : this.options.devices.serviceListing();
-    if (pinned !== undefined && typeof named === "string" && named !== pinned) {
+    // a PC pinned to its signed list stays in its account whatever listing the service names: it reads on, and the read
+    // widens nothing (`widen` below), so the members' signed blocks still reach it
+    if (pinned !== undefined && typeof named === "string" && named !== pinned && !this.options.devices.listFollowed()) {
       logAccess({ event: "account.listing.replaced" });
       this.options.devices.clearAccountBinding("unlisted", "account");
       return empty;
@@ -551,7 +553,8 @@ export class AccountMailbox {
         // the snapshot is whole and checked, so the service answered this PC: the listing's answer is the newest thing the commit rests on
         // one a link bound lets more in only under the listing its rows were let in under, named by this read's own mailbox
         widen: async () => binding !== null ? await this.checkListing(binding) === "confirmed" && this.listingFresh(binding) : pinned === undefined || named === pinned,
-        narrow: (snapshot) => { this.options.devices.dropListedRemoved(snapshot.removed.map((row) => row.key)); this.options.devices.narrowedRead(); },
+        // on a PC pinned to its signed list the rows are the list's: the snapshot's word that a key was removed drops none
+        narrow: (snapshot) => { if (!this.options.devices.listFollowed()) this.options.devices.dropListedRemoved(snapshot.removed.map((row) => row.key)); this.options.devices.narrowedRead(); },
         commit: (stage) => {
         // Validate pins and persist the safety decisions before applying staged adds.
         const committedLifts = ports.commit(stage);

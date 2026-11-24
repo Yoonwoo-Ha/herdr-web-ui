@@ -7,6 +7,7 @@ import type { AccountAddRelay } from "../../shared/machines.ts";
 import type { DeviceStore } from "../devices.ts";
 import type { RelayService } from "../relay/service.ts";
 import { AccountServiceRefusal, type AccountMailbox } from "./mailbox.ts";
+import { LIST_REMOVED_FROM } from "./records.ts";
 
 export interface PressServices {
   readonly devices: DeviceStore;
@@ -33,6 +34,8 @@ export async function pressOnce(services: PressServices, account: string): Promi
   // the account the owner's browser is signed in to must be the one named for this PC, which a press never sets
   if (relay.savedRelayAccount() !== account) return refuse("account_mismatch", SET_UP_FOR_ANOTHER, 409);
   if (devices.account() !== null) return refuse("in_account", "This PC is already in an account", 409);
+  // an account whose signed list removed this PC takes it back on no path: only as a new PC, after a reset relay identity
+  if (devices.listRemovedFrom(account)) return refuse("list_removed", LIST_REMOVED_FROM, 409);
   // a Revoke all, a reset or a denial while the service answers raises this: the press then binds nothing (PADD-1)
   const generation = devices.gen();
   // a relay identity reset meanwhile makes this another PC to the account service: its answer was for the old one
@@ -40,6 +43,8 @@ export async function pressOnce(services: PressServices, account: string): Promi
   let admitted: Awaited<ReturnType<AccountMailbox["admission"]>>;
   try { admitted = await accountMailbox.admission(account); }
   catch (error) {
+    // the account keeps a signed list and takes a PC by it alone: said as that, not as a service that is away
+    if (error instanceof AccountServiceRefusal && error.status === 409 && error.code === "list_add") return refuse("list_add", "This account keeps a signed list of its devices, and takes a PC only by that list.", 409);
     // a listing an invite made is offered Add for ten minutes: asking again past them waits for nothing
     if (error instanceof AccountServiceRefusal && error.code === "listing_expired") return refuse("listing_expired", "Your devices no longer offer Add for this PC: its card ran out 10 minutes after it was listed", 409);
     return refuse("account_unavailable", error instanceof Error ? error.message : String(error), 503);

@@ -8,13 +8,13 @@ import { parseIntroducedPcs } from "./introductions.ts";
 import { ACCOUNT_HELD_MAX } from "./holds.ts";
 import { AccountAddError } from "../machines.ts";
 import { notePressAsk, pressOnce, waitingForAdd } from "./one-press.ts";
-import { applyAccountRecords, applyEnrollment, applyLink, type LinkRefusal } from "./records.ts";
+import { applyAccountRecords, applyEnrollment, applyLink, LIST_REMOVED_FROM, type LinkRefusal } from "./records.ts";
 
 const LINK_STATUS: Record<LinkRefusal, number> = {
   record_invalid: 400, signature_invalid: 400, account_mismatch: 409, signer_not_member: 403,
   tombstoned: 409, link_not_owner: 403, key_in_use: 409, account_unavailable: 503, enrolling: 409, removal_pending: 409,
   link_required: 403, unverified_device: 403, pairing_ended: 409, older_device: 403, closed: 409, read_pending: 409,
-  replacement_needs_app: 409,
+  replacement_needs_app: 409, list_followed: 409, list_removed: 409,
 };
 
 /**
@@ -58,6 +58,8 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       enrolling: context.services.accountHolds.enrolling(), blocked_all: mailbox.holdsEveryAdd(), ...(fresh === undefined ? {} : { fresh }), mailbox: { last_pull_at: mailbox.lastPullAt, error: mailbox.error },
       // a yes or no only, never the account asked for: the account is named here once this PC is in it
       waiting_for_add: waitingForAdd(devices),
+      // a PC pinned to its account's list: which list, where the PC stands in it, and why it lets nobody in when it does not
+      ...(context.services.accountList?.summary() ? { list: context.services.accountList.summary() } : {}),
     });
   }
   if (pathname === "/api/account/list" && request.method === "GET") {
@@ -95,6 +97,24 @@ export async function handleAccountRequest(request: Request, pathname: string, c
       // this PC's own window or CLI alone (dispatch.ts ownWindow): the proof lists the PC again after its leave
       try { return reply(await context.services.accountMailbox.listingProof()); }
       catch (error) { return fail("account_unavailable", error instanceof Error ? error.message : String(error), 503); }
+    }
+    case "/api/account/list/pin": {
+      setRequestRoute(pathname);
+      // a person at this PC names the list of its account: this PC's own window and CLI alone (dispatch.ts ownWindow)
+      const list = context.services.accountList;
+      if (list === null) return fail("not_found", "This PC follows no list", 404);
+      if (typeof body.list !== "string") return fail("invalid_list", "Name the list by its id", 400);
+      const named = await list.wantList(body.list);
+      if ("status" in named) return reply(named.status);
+      const refusals = {
+        invalid_list: ["Name the list by its id: 64 characters of 0-9 and a-f", 400],
+        not_in_account: ["Add this PC to your account first.", 409],
+        pinned: ["This PC already follows another list. Revoke all on this PC to leave its account first.", 409],
+        removed: [LIST_REMOVED_FROM, 409],
+        unavailable: ["This PC's list or its keys cannot be read or written.", 503],
+      } as const;
+      const [message, status] = refusals[named.refused];
+      return fail(named.refused === "removed" ? "list_removed" : named.refused, message, status);
     }
     case "/api/account/one-press": {
       if (!devices.opensAll()) return fail("not_found", "Unknown account action", 404);

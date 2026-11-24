@@ -20,7 +20,15 @@ export class AccountCatchUp {
   constructor(
     private readonly devices: DeviceStore,
     private readonly rows: ReturnType<typeof accountRowsFor> | null,
-    private readonly options: { readonly pc: PcAccountState | null; readonly releases?: RecoveryReleases | undefined },
+    private readonly options: {
+      readonly pc: PcAccountState | null; readonly releases?: RecoveryReleases | undefined;
+      /**
+       * Whether this PC is pinned to its account's signed list (list-follow.ts): its account rows are then the list's.
+       * A whole read of the snapshot admits and drops none of them, its age makes none of them wait, and the account
+       * service turning Step 2 off closes none of them.
+       */
+      readonly listFollowed?: () => boolean;
+    },
   ) {
     const { pc, releases } = options;
     this.releases = releases;
@@ -50,12 +58,16 @@ export class AccountCatchUp {
 
   /** An explicit opt-out is not a whole read: no renewal, no lift, and no account-list access. */
   step2Off(): void {
+    if (this.listed()) return;
     if (this.options.pc?.setServiceStep2Off(true)) this.rows?.store()?.waitForService();
   }
 
+  private listed(): boolean { return this.options.listFollowed?.() === true; }
+
   /** `readmission`: the proved returning device a sign-in's own pull may readmit (S2-28, T55). */
   commitList(snapshot: AccountSnapshot, readmission?: Readmission): void {
-    const store = this.rows?.store();
+    // on a PC pinned to its list the snapshot's devices are the service's word, which no longer decides a row
+    const store = this.listed() ? null : this.rows?.store();
     try {
       store?.commitList(snapshot, readmission);
       const accountError = this.devices.accountError;
@@ -77,7 +89,8 @@ export class AccountCatchUp {
     const clock = this.devices.waitClock();
     const deadline = clock.now() + STALE_READ_MS;
     this.remaining = () => deadline - clock.now();
-    this.onStale = () => { store?.waitForRead(); this.devices.staleAccountMembers(); };
+    // read when the hour is over: a PC pinned since then keeps the list's rows usable, service or no service
+    this.onStale = () => { if (!this.listed()) this.rows?.store()?.waitForRead(); this.devices.staleAccountMembers(); };
     const fire = () => {
       const left = this.checkFreshness();
       if (left > 0) this.cancelStaleness = clock.setTimeout(fire, Math.ceil(left));

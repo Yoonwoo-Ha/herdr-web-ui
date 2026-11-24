@@ -127,10 +127,11 @@ export function requiresAuth(pathname: string): boolean {
   return pathname !== "/api/health" && pathname !== "/api/auth" && pathname !== "/api/devices/pair";
 }
 
-export function unauthorizedJson(reason: AccessRefusal = "token_required"): Response {
+/** `why`: with `strict`, what this PC cannot read, said to its own window alone (it may name a folder of this PC). */
+export function unauthorizedJson(reason: AccessRefusal = "token_required", why?: string | null): Response {
   if (reason === "other_user") return jsonResponse({ error: { code: "other_user", message: "this PC belongs to another Tailscale user" } }, 403);
   if (reason === "locked") return jsonResponse({ error: { code: "locked", message: "This PC is locked: only devices approved on its own screen can open it" } }, 403);
-  if (reason === "strict") return jsonResponse({ error: { code: "strict", message: "This PC cannot read its safety log: open it on its own screen, or run ovis recover there" } }, 403);
+  if (reason === "strict") return jsonResponse({ error: { code: "strict", message: "This PC cannot read its safety log: open it on its own screen, or run ovis recover there", ...(why ? { reason: why } : {}) } }, 403);
   return jsonResponse({ error: { code: "unauthorized", message: reason === "pairing_required" ? "pair this device, or use the token" : "token required" } }, 401);
 }
 

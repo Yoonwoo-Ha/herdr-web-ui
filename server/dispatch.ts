@@ -127,6 +127,8 @@ export interface RequestServices {
   readonly accountList: ListFollow | null;
   /** For how long this PC has let each key of its account in (server/account/witness.ts); null with the release flag off. */
   readonly accountWitness: AccountWitness | null;
+  /** On a server that follows no list (Step 2 off): looks whether another Ovis on this folder pinned the PC, and then closes this server's account part. Null on a server that follows its list itself. */
+  readonly pinWatch: (() => void) | null;
   readonly preferences: PreferenceStore;
   readonly herdrSidebar: HerdrSidebarConfig;
   /** `loginPath`: the request states a Tailscale login, so the PC's own login must be known, not merely cached as unknown */
@@ -382,7 +384,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("auth-refusal");
     // a script's Bearer guess is told to wait; a browser's cookie gets the usual 401 and its sign-in form
     if (presented === "held" && pathname !== "/ws" && request.headers.has("authorization")) return presentedTokenHeld(client);
-    return pathname === "/ws" ? new Response("unauthorized", { status: 401 }) : unauthorizedJson(access.level === "none" ? access.reason : "token_required");
+    // this PC's own window is told what it cannot read (the file, the folder), where any other caller hears the general words
+    return pathname === "/ws" ? new Response("unauthorized", { status: 401 })
+      : unauthorizedJson(access.level === "none" ? access.reason : "token_required", ownWindow ? devices.accountError : null);
   }
 
   if (options.profile === "machine" && machineRouteRestricted(pathname, request.method)) {
@@ -487,8 +491,9 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Add this PC to your account on this PC itself." } }, 403);
   }
-  // how this PC follows its account's signed list is for this PC's own window and CLI to read
-  if (pathname === "/api/account/list" && !ownWindow) {
+  // how this PC follows its account's signed list is for this PC's own window and CLI to read, and only a person at
+  // this PC names the list it pins
+  if ((pathname === "/api/account/list" || pathname === "/api/account/list/pin") && !ownWindow) {
     setRequestRoute("owner-refusal");
     return jsonResponse({ error: { code: "owner_only", message: "Read this on this PC itself." } }, 403);
   }

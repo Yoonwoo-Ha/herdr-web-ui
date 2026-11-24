@@ -16,6 +16,8 @@ export async function pullForRefusedSignIn(
   const joined = devices.opensAll() ? await devices.matchAccountRelay(deviceId, nonce, signature, options.serverId) : null;
   if ((devices.opensAll() && !mux.active) || (joined !== null && "match" in joined)) return mux.active;
   mux.extendSetup(SIGN_IN_WAIT_MS + 10_000);
-  await accountMailbox.pullForRefusedSignIn(SIGN_IN_WAIT_MS, Date.now(), joined?.readmission);
+  // a PC pinned to its signed list reads that list too: there a member's word that let the device in a moment ago is an entry
+  await Promise.all([accountMailbox.pullForRefusedSignIn(SIGN_IN_WAIT_MS, Date.now(), joined?.readmission),
+    options.services.accountList?.readForSignIn(SIGN_IN_WAIT_MS, joined?.readmission)]);
   return mux.active;
 }

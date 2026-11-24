@@ -16,6 +16,7 @@ import { DEFAULT_ACCOUNT_SERVICE } from "../static.ts";
 import { loadRelayIdentity, RelayIdentityError, rotateRelayIdentity, savedIdentityReader, savedServerId } from "./identity.ts";
 import type { RelayIdentity } from "./identity.ts";
 import { forgetListKeys } from "../account/list-keys.ts";
+import { forgetList } from "../account/list-follow.ts";
 import { SignedInSessions } from "./admissions.ts";
 import { DirectCarrier } from "./direct.ts";
 import type { DirectCarrierOptions } from "./direct.ts";
@@ -685,6 +686,7 @@ export class RelayService {
       this.identity = rotateRelayIdentity(this.options.stateDir);
       // a new relay identity is a new PC to the account's signed list too: the keys of the old one go with it
       forgetListKeys(this.options.stateDir);
+      forgetList(this.options.stateDir);
       this.blocked = null;
     } finally { this.resetting = false; }
     return this.enabled ? this.start() : this.status();

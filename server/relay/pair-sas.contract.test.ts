@@ -169,6 +169,57 @@ test("a phone that offers the feature gets it, and pairs once its digits match a
   expect(f.app.context.services.relay.approvals.list()).toEqual([]);
 });
 
+test("on a pinned PC, a comparison approved for a key the list does not hold records the pairing and opens no session by it", async () => {
+  const f = fixture();
+  const { devices, relay } = f.app.context.services;
+  // the PC follows its account's list, and the list holds no device under this key
+  const followed = spyOn(devices, "listFollowed").mockReturnValue(true);
+  const role = spyOn(devices, "listRoleOf").mockReturnValue(null);
+  try {
+    const { p } = await direct(f);
+    await p.hello();
+    const waiting = prompts(f, (list) => list.length === 1);
+    const digits = await compare(p);
+    const [request] = await waiting;
+    expect(request?.digits).toBe(digits);
+    expect(relay.approvals.decide(request!.id, true)).toBe(true);
+    const before = devices.list(null).length;
+    await confirm(p);
+    // no AUTH_OK: the row is the account's id for the key, which the list alone answers for
+    expect(await sessionError(p)).toBe("auth_failed");
+    expect(devices.list(null).length).toBe(before + 1);
+  } finally { followed.mockRestore(); role.mockRestore(); }
+});
+
+test("on a pinned PC, a code used for a key that holds a row under the account's id makes a pairing under an id of its own, which is the PC's own business", async () => {
+  const f = fixture();
+  const { devices, relay } = f.app.context.services;
+  const followed = spyOn(devices, "listFollowed").mockReturnValue(true);
+  const role = spyOn(devices, "listRoleOf").mockReturnValue(null);
+  try {
+    // the row: a comparison approved at the PC for a key the list does not hold
+    const { p } = await direct(f);
+    await p.hello();
+    const waiting = prompts(f, (list) => list.length === 1);
+    await compare(p);
+    const [request] = await waiting;
+    expect(relay.approvals.decide(request!.id, true)).toBe(true);
+    await confirm(p);
+    expect(await sessionError(p)).toBe("auth_failed");
+    const row = devices.list(null).at(-1)!;
+    const rows = devices.list(null).length;
+    // the same key comes again with a code of this PC: the row it holds is reused, and the list still answers for it
+    const again = await direct(f);
+    await again.p.hello([]);
+    await again.p.send({ type: FrameType.PAIR, flags: 0, stream_id: 0, payload: { code: devices.startPairing().code, label: "New phone", public_key: p.publicKey } });
+    const answer = await again.p.inbox.next();
+    // a new row, under an id that is not the account's for the key: the person at the PC made that pairing
+    expect(answer.type).toBe(FrameType.AUTH_OK);
+    expect(devices.list(null).length).toBe(rows + 1);
+    expect(devices.list(null).at(-1)!.id).not.toBe(row.id);
+  } finally { followed.mockRestore(); role.mockRestore(); }
+});
+
 test("an approved comparison leaves a pairing code that is still showing usable", async () => {
   const f = fixture();
   const code = f.app.context.services.devices.startPairing();
@@ -996,6 +1047,54 @@ test("a PC vouched for is refused by a PC with no drive account member to approv
   const { f, member, admit } = await joinFixture(Date.now, true);
   f.app.context.services.devices.update(member.id, { role: "watch" });
   expect((await vouched(f, (key) => admit(key))).refused).toBe("auth_failed");
+});
+
+test("on a PC pinned to its account's signed list, a PC vouched for is taken only when the list holds its relay key", async () => {
+  const { f, member, admit } = await joinFixture(Date.now, true);
+  const { devices, accountList, relay } = f.app.context.services;
+  await signedIn(f, member);
+  const followed = spyOn(devices, "listFollowed").mockReturnValue(true);
+  // the member that approves is one the list holds to drive with full power: nobody else approves on a pinned PC
+  const allows = spyOn(accountList!, "allowsJoins").mockReturnValue(true);
+  const asked: string[] = [];
+  const inList = { holds: false };
+  const holds = spyOn(accountList!, "holdsPc").mockImplementation((endpoint) => { asked.push(endpoint); return inList.holds; });
+  try {
+    const identity = { keys: generateKeyPair() };
+    // a fresh admission of the account service is not enough any more: refused before any prompt
+    expect((await askToJoin(f, (key) => admit(key), PAIR_INTENT_VOUCHED, identity)).refused).toBe("auth_failed");
+    expect(asked).toEqual([bytesToHex(identity.keys.publicKey)]);
+    expect(relay.approvals.remoteList()).toEqual([]);
+    inList.holds = true;
+    const prompt = remotePrompt(f);
+    expect((await askToJoin(f, (key) => admit(key), PAIR_INTENT_VOUCHED, identity)).refused).toBeUndefined();
+    expect(await prompt).toMatchObject({ vouched: true, proven_server_id: deriveServerId(identity.keys.publicKey) });
+  } finally { followed.mockRestore(); allows.mockRestore(); holds.mockRestore(); }
+});
+
+test("on a pinned PC, a PC vouched for whose relay key the list removed while its comparison waited is not taken: no row, no session", async () => {
+  const { f, member, admit } = await joinFixture(Date.now, true);
+  const { devices, accountList } = f.app.context.services;
+  const link = await signedIn(f, member);
+  const followed = spyOn(devices, "listFollowed").mockReturnValue(true);
+  // the member that approves is one the list holds to drive with full power: nobody else approves on a pinned PC
+  const allows = spyOn(accountList!, "allowsJoins").mockReturnValue(true);
+  const inList = { holds: true };
+  const holds = spyOn(accountList!, "holdsPc").mockImplementation(() => inList.holds);
+  try {
+    const identity = { keys: generateKeyPair() };
+    const prompt = remotePrompt(f);
+    const { p } = await askToJoin(f, (key) => admit(key), PAIR_INTENT_VOUCHED, identity);
+    const request = await prompt;
+    // its removal reaches this PC while the member has not answered yet
+    inList.holds = false;
+    expect((await post(link, "/api/relay/pairing", { id: request.id, decision: "approve", proven_server_id: request.proven_server_id, pc_label: "Verified PC" })).status).toBe(200);
+    await confirm(p);
+    const answer = await p.inbox.next();
+    expect([answer.type, answer.type === FrameType.SESSION_ERROR ? answer.payload.code : null]).toEqual([FrameType.SESSION_ERROR, "auth_failed"]);
+    const registry = readDeviceRegistry(join(f.stateDir, "devices.json"));
+    expect(registry.kind === "ok" && registry.devices.some((row) => row.relay_public_key === p.publicKey)).toBe(false);
+  } finally { followed.mockRestore(); allows.mockRestore(); holds.mockRestore(); }
 });
 
 test("a PC vouched for waits for a member as 'pair this PC', and an approval makes a watch row the approver added, no member", async () => {

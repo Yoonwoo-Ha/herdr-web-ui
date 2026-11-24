@@ -30,14 +30,19 @@ export class CatchUpGate {
   /** `binding`: this PC's binding id now, null in no account, where nobody waits (no block can name it). */
   constructor(private readonly binding: () => string | null, private readonly released: (id: string) => boolean = () => false) {}
 
-  /** `ownCredential`: whether the row's access is this PC's own to give and nothing holds it back, asked only after a read that widened nothing. */
-  waits(row: GatedRow, legacyCredential?: () => boolean, ownCredential?: () => boolean): boolean {
+  /**
+   * `ownCredential`: whether the row's access is this PC's own to give and nothing holds it back, asked only after a read that widened nothing.
+   * `listed`: whether this PC is pinned to its account's signed list, that list lets the row's key in now and nothing
+   * here holds it back, asked only while no whole read has come: such a row waits for none, as the list says who is in.
+   */
+  waits(row: GatedRow, legacyCredential?: () => boolean, ownCredential?: () => boolean, listed?: () => boolean): boolean {
     const binding = this.binding();
     if (binding === null) return false;
     if (this.lifted.has(row.id)) return true;
     if (legacyCredential !== undefined) return !legacyCredential();
     if (this.released(row.id) || pairedAtPc(row.origin)) return false;
     if (this.caughtUpFor === binding) return this.waiting.has(row.id);
+    if (listed?.() === true) return false;
     return !(this.narrowedFor === binding && ownCredential?.() === true);
   }
 

@@ -131,28 +131,35 @@ async function locked<T>(path: string, waitMs: number, work: () => Promise<T>): 
   for (;;) {
     try { closeSync(openSync(lock, "wx", 0o600)); break; } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw new ListKeysError("its folder cannot be written");
-      let age: number;
-      try { age = Date.now() - statSync(lock).mtimeMs; } catch { continue; }
-      if (age > LOCK_STALE_MS) { try { unlinkSync(lock); } catch { /* another call took it over */ } continue; }
+      let age = 0;
+      try { age = Date.now() - statSync(lock).mtimeMs; } catch (gone) { if ((gone as NodeJS.ErrnoException).code === "ENOENT") continue; }
+      // a lock left by a call that ended while it wrote is taken over. One that cannot be deleted is waited for like
+      // any other, and no longer: the wait ends in an error, and never spins
+      if (age > LOCK_STALE_MS) { try { listKeysFs.unlinkSync(lock); continue; } catch (gone) { if ((gone as NodeJS.ErrnoException).code === "ENOENT") continue; } }
       if (Date.now() > deadline) throw new ListKeysError("another Ovis on this state folder is making this PC's keys");
       await new Promise((resolve) => setTimeout(resolve, LOCK_POLL_MS));
     }
   }
-  try { return await work(); } finally { try { unlinkSync(lock); } catch { /* a stale lock is taken over */ } }
+  try { return await work(); } finally { try { listKeysFs.unlinkSync(lock); } catch { /* a stale lock is taken over */ } }
 }
+
+/** What the lock is deleted with: one place, so a test can make a lock that will not go. */
+export const listKeysFs = { unlinkSync };
 
 /**
  * Writes a new pair for `serverId`, under the lock. Where no file is there it is created exclusively (a hard link of
  * the finished, flushed temporary file); another identity's file is replaced. Nothing is written when the relay
  * identity was reset since `resets` was read: those keys would be the old PC's.
  */
-async function writeKeys(path: string, serverId: string, replace: boolean, resets: number): Promise<void> {
+async function writeKeys(path: string, serverId: string, replace: boolean, resets: number, closed: () => boolean): Promise<void> {
   const signing = await generateStoredEncryptionKey();
   const encryption = await generateStoredEncryptionKey();
   const file: KeysFile = { v: 1, server_id: serverId, signing: signing.secret, encryption: encryption.secret };
   // a pair that does not import is never written
   await importKeys(file);
   if ((RESETS.get(path) ?? 0) !== resets) throw new ListKeysError("this PC's relay identity was reset while its keys were being made");
+  // a server that stopped while the keys were made writes none: another Ovis may hold the folder by now
+  if (closed()) throw new ListKeysError("Ovis stopped while this PC's keys were being made");
   if (replace) { writePrivateState(path, file); return; }
   const temporary = preparePrivateState(path, file);
   try {
@@ -170,6 +177,10 @@ export class ListKeyStore {
   private readonly path: string;
   private held: PcListKeys | null = null;
   private turn: Promise<unknown> = Promise.resolve();
+  private closed = false;
+
+  /** The server that uses these keys stops: keys that are on disk are still read, and none are made any more. */
+  close(): void { this.closed = true; }
 
   /** `lockWaitMs`: how long a call waits for another Ovis on the folder to finish making keys (LIST_KEYS_LOCK_WAIT_MS). */
   constructor(stateDir: string, private readonly lockWaitMs = LIST_KEYS_LOCK_WAIT_MS) { this.path = listKeysPath(stateDir); }
@@ -210,7 +221,8 @@ export class ListKeyStore {
         const now = await read();
         if ("keys" in now) return now.keys;
         // another identity's keys are no PC's any more: replaced by a pair for this one
-        await writeKeys(this.path, serverId, now.other, resets);
+        if (this.closed) throw new ListKeysError("Ovis stopped before this PC's keys were made");
+        await writeKeys(this.path, serverId, now.other, resets, () => this.closed);
       }
       throw new ListKeysError("it changed while this PC's keys were being made");
     });

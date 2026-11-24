@@ -260,17 +260,21 @@ export class AccountDeviceStore implements AccountRowSource {
     }
   }
 
-  /** Applies a whole read's list: drops what it no longer names, then admits what it newly names and the guards let in. */
-  commitList(list: ListCommit, readmission?: Readmission): { admitted: string[]; dropped: string[] } {
+  /**
+   * Applies a whole read's list: drops what it no longer names, then admits what it newly names and the guards let in.
+   * `settled`: the list is one a person at this PC has just taken as the account's (the PC pinned its signed list), so
+   * what it names is no news to them: its devices come in with no join hold.
+   */
+  commitList(list: ListCommit, readmission?: Readmission, settled = false): { admitted: string[]; dropped: string[] } {
     this.admittedNow = [];
-    try { return this.commit(list, readmission); } finally {
+    try { return this.commit(list, readmission, settled); } finally {
       const rows = this.admittedNow;
       this.admittedNow = null;
       this.tellAdmitted(rows);
     }
   }
 
-  private commit(list: ListCommit, readmission?: Readmission): { admitted: string[]; dropped: string[] } {
+  private commit(list: ListCommit, readmission: Readmission | undefined, settled: boolean): { admitted: string[]; dropped: string[] } {
     this.usable();
     const removed = new Set(list.removed.map((gone) => gone.key));
     const eligible = new Map(list.devices.filter((entry) => entry.eligible && !removed.has(entry.key)).map((entry) => [entry.key, entry]));
@@ -313,7 +317,7 @@ export class AccountDeviceStore implements AccountRowSource {
         key: entry.key, listKeys, removedKeys: [...removed], othersEver: first.othersEver(), firstListKey: first.listKey(),
         otherRows: first.otherRows() || this.file.devices.some((row) => row.key !== entry.key),
       });
-      if (this.admit(entry, bypass)) admitted.push(entry.key);
+      if (this.admit(entry, bypass || settled)) admitted.push(entry.key);
     }
     return { admitted, dropped };
   }

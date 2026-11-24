@@ -7,6 +7,13 @@ export const RELAY_HINTS = "relay-hints";
 export const ACCOUNT_OPENS_ALL_FEATURE = "account-opens-all-1";
 /** A client that offers it reads `account_unreachable` and `account_readd_required`; one without it takes either as a protocol error. */
 export const ACCOUNT_LISTING_ERRORS = "account-listing-errors-1";
+/**
+ * A PC selects it only while it lets its account's devices in by the account's signed list alone (docs/account.md,
+ * "The account's signed list on a PC"). A client that signs in with the key the list holds for it requires it, so a
+ * PC that follows no list answers `unsupported_extension`. A client that offers it without requiring it reads
+ * `account_list_required`; one without it takes that code as a protocol error.
+ */
+export const ACCOUNT_LIST_FEATURE = "account-list-1";
 /** Eight numbered receipts fit the existing 1 KiB session error, even with safe-integer log numbers. */
 export const AUTH_RECEIPTS_MAX = 8;
 /** The address is a hint: Noise against the pinned PC key proves the PC. */
@@ -85,6 +92,8 @@ export const SESSION_ERRORS = [
   "held", "not_listed", "admission",
   // sent only to a client that offered ACCOUNT_LISTING_ERRORS
   "account_unreachable", "account_readd_required",
+  // sent only to a client that offered ACCOUNT_LIST_FEATURE and did not require it
+  "account_list_required",
 ] as const;
 export type SessionError = typeof SESSION_ERRORS[number];
 export const STREAM_ERRORS = [

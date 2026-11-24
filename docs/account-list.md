@@ -1,11 +1,11 @@
 # The signed list: an entry
 
-No part of Ovis decides by this format yet: the account as it works today signs its records one by
-one, with no chain ([Linking devices with an account](account.md#rules)). A device keeps a copy of
-its account's list where the account service keeps lists for that account, and only records where
-it would have said otherwise ([On a device](#on-a-device)). A PC reads the list of its account,
-checks it, and decides nothing by it
-([The account's signed list on a PC](account.md#the-accounts-signed-list-on-a-pc)).
+A PC reads the list of its account and checks it. One that a person pinned to the list lets its
+account's devices in by the list alone; any other decides nothing by it, and its account works as it
+did, with records signed one by one and no chain
+([The account's signed list on a PC](account.md#the-accounts-signed-list-on-a-pc)). A device keeps a
+copy of its account's list where the account service keeps lists for that account, and only records
+where it would have said otherwise ([On a device](#on-a-device)).
 
 An owner's devices and machines share one signed list. Every member keeps a copy and checks every
 entry by itself; the account service stores entries and must never be able to write one that
