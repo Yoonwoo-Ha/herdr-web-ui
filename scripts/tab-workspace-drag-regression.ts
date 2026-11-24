@@ -93,7 +93,9 @@ export async function checkTabWorkspaceDrag(browser: Browser, origin: string): P
       await dragOnto(page, headerTab("mover"), rowHeader(targetId), async () => {
         const dropGroup = page.locator(`.workspace-group[data-workspace="${targetId}"].is-tab-drop`);
         await dropGroup.waitFor();
-        const style = await dropGroup.locator("> .workspace-header").evaluate((node) => {
+        // the header's background eases in (a transition): read it once that transition has finished, not on its first frame
+        const style = await dropGroup.locator("> .workspace-header").evaluate(async (node) => {
+          await Promise.all(node.getAnimations().map((animation) => animation.finished));
           const computed = getComputedStyle(node);
           return { bg: computed.backgroundColor, shadow: computed.boxShadow };
         });
