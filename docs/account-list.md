@@ -1192,6 +1192,228 @@ the list holds. It keeps how many comparisons it made, how many differed and the
 device alone, and writes one line to the console when the difference changes, with counts and no
 name, id or key.
 
+## An account that was in use
+
+An account that has devices and PCs before it has a list is moved onto one by the first of its
+devices that can: it starts the list and carries the others in. This is the one moment a list is
+made from what the account service says, so nothing here takes the service's word. The code is
+[`shared/account-list-migrate.ts`](../shared/account-list-migrate.ts); it has no I/O, no storage,
+nothing random and no clock, and it writes every entry through the kinds' own writer.
+
+**The keys such a list is born with are the keys the devices' sign-ins registered** with the
+account service, since those are the keys the account's PCs let in before the list. Entry 0 is
+signed by the first device's sign-in key, not by its account key; the run of `carried` entries
+follows; and the first device ends the run with a `device` entry that hands its place to its
+account key (it adds that key with the device's own card and ends the sign-in key), then opens
+the next epoch. Every device that was carried in does the same when it next runs. A PC that
+follows the list lets in whatever key the list holds as a device that is in: a carried sign-in key
+until its hand-over, the account key after. So an app from before the list goes on opening such a
+PC with the key it has, and each device ends up in the list under a key that outlives its sign-in.
+
+**The birth is one request.** Entry 0, the whole run, the hand-over and the `epoch` entry are
+placed together or not at all (`signMigration` signs them once, and the device sends those very
+entries until the service has taken them). Until then the account has no list in any sense, and
+the first device follows nothing. An honest log therefore never holds a part of a birth: a member
+that is shown one (the run is not over, or the `epoch` entry that ends the birth is missing)
+waits, says so, and signs nothing on it.
+
+**Three rules keep the service's word out:**
+
+1. A list is named to a PC only by a device the PC knows, inside its own session with that PC, and
+   only a list whose first signer that PC knows too.
+2. A device follows a list it did not make only when the PCs it knows say who started it.
+3. The first device carries a key in only where every PC it knows lets that key in.
+
+### A day, by a PC's own two clocks
+
+A PC counts a key only when it has let it in **for a day by its wall clock, and has itself been
+running for six hours with the key let in** (`MIGRATION_WITNESS_SECONDS`,
+`MIGRATION_RUNNING_SECONDS`). The wall clock is held against the latest time the PC ever saved, so
+it never runs back; the running time is the PC's own count. A clock that jumps when a PC with no
+battery clock starts so makes nothing a day old, and a PC that is used two hours a day gets there
+in three days. Nothing else measures the day: not the list's own time, not an entry's `issued_at`,
+not a time the service says. A PC answers with durations (`LetIn`: `wall`, `ran`, and `idle`
+since the key was last used), never with times, so no two machines' clocks are compared. A key
+named twice counts by its shorter stretch, and a row with no time recorded counts from the moment
+the PC began to record.
+
+A device knows a PC by its own record when it did something itself for that PC (`PcHow`: it
+paired with it at the PC, pressed Add for it, added it over SSH, or is that PC's own window), or
+when it has held sessions with that relay key for seven days (`MIGRATION_KNOWN_SECONDS`,
+`ownEvidence`). The account service's directory alone is no such record. Only the first kind
+(`addedItself`) lets a member sign that PC's `pc` entry, which makes the PC a `full` signer, with
+no question: never the directory, however long, and never what a PC says of itself. A PC nobody
+did anything for stays an endpoint with no key, which follows the list and signs nothing, until a
+person compares the number at it.
+
+### What the first device carries in
+
+`migrationPlan` takes what the device knows: the account's devices as the service lists them; the
+removed keys as the service lists them, with every key the device itself holds a block or a removal
+against, sent or not; and for each PC whether the device knows it by its own record and what that
+PC answered over a session: its account, the list it follows if any, the keys it lets in with how
+long it has, and the keys it holds a removal against.
+
+- A device key is carried in only when the service lists it as let in, nobody (the service, this
+  device, any PC that answered) holds a removal against it, and **every** PC the device knows by
+  its own record, that answered, has let it in for a day. No single PC adds a key: one the service
+  planted on one PC, or named itself, is left out (`unwitnessed`); so is one a PC put out and the
+  service lists again (`removed_at_pc`).
+- A key that every such PC lets in, one of them for less than a day, holds the start back
+  (`too_new`, with the seconds left). Nobody presses anything: the device asks again. So does a
+  device the service lists as one no PC lets in yet (it signed in this morning), for a day from
+  the device's first try; after that it is left out (`not_eligible`).
+- **A PC that does not answer is no yes.** While a PC the device knows is silent it starts nothing
+  (`pcs_silent`); three days after its first try (`MIGRATION_ANSWER_SECONDS`) it goes by those
+  that answered, at least one. An answer counts only when it was given in this run of the app.
+- The device's own sign-in key is held to the same (`self_unlisted`, `self_removed`,
+  `self_unwitnessed`), and with no PC it knows by its own record that answered it starts nothing
+  (`no_witness`).
+- A PC is carried in when the device knows it by its own record, answered or not. Any other
+  (`unknown_pc`) is added later by a `pc` entry.
+- At most 64 are carried in (`MIGRATION_CARRIED_MAX`), devices first. A sign-in that nobody uses
+  any more is told apart before that: the service lists it as not let in, or a PC no longer lets
+  it in (a PC drops a row it saw no sign-in of for 60 days). Where an account still has more, the
+  devices a PC saw in use last are kept and the rest is left out (`over_limit`).
+
+A device that was left out asks to be let in as a new device does. `signMigration` refuses the
+whole birth, before it signs or seals anything, when a key the plan names is no key whose point is
+on the curve or is the device's own (`key_invalid`): the kinds read only the spelling of a carried
+key, so that check is made here, and by every PC.
+
+### A device that was carried in
+
+`devicePlace` says where a device stands in such a list, from the list alone: `first`, `carried`,
+`member`, `out` or `absent`. That is how a device that was off learns what became of it.
+
+A carried device does not follow the list on the service's word. `joinVerdict` asks the PCs it
+knows by its own record, each over a session to that PC's own relay key: **every** one that answers
+must agree. A PC that follows a list agrees when it is this very list; a PC that follows none
+agrees when it has let the key that signed entry 0 in for a day and holds no removal against it. A
+silent PC is no yes: the device waits for every PC it knows (`pcs_silent`), and goes by those that
+answered only after three days. So a list the service started with a key of its own, carrying the
+person's real keys, is refused by every device it shows it to (`first_signer_unknown`). A refusal
+names the PCs it is about: for `other_list` the way out is that PC's (it is removed from the
+account, or reset), and the refusal clears when the PC is gone or agrees. A device that refuses
+says so, never names that list to anybody, and asks to be let in as a new device does. It follows
+no list that carries a key off the curve (`carried_off_curve`).
+
+Then it hands its place to its member key (`signRotation`): one `device` entry signed by its
+sign-in key. `standsFor` gives, for a key, the key the same device is in by now, and `rekeys` the
+rows that moved between two states: a PC moves such a row instead of announcing a new device.
+
+### A vouch: the link (`ovis-list-link/1`), with both signatures
+
+A PC lets a device in by the key its present sign-in registered, and the list holds the device by
+its member key. A device whose sign-in has changed since the move joins the two with its **link**,
+one statement with two signatures:
+
+```
+bytes  = "ovis-list-link/1" || len(account) || account || len(list) || list || len(key) || key || len(device) || device
+         len(x) = the byte length of x in 4 bytes, big-endian; each value as UTF-8
+member = ECDSA P-256 / SHA-256 by `key`, r || s, 86 base64url characters
+device = the same, by `device`, over the same bytes
+handed to a PC as { "key", "device", "link": { "member", "device" } }
+```
+
+`device` is the registered sign-in key; `key` is the member key the same device is in the list by.
+It is the statement the account service keeps to know which sign-in is which member, and to a PC
+it is a vouch: the sign-in key says the member key is its device's, and the member key agrees. A
+device signs one only for its own member key while that key is in (`signVouch`), anyone may carry
+it, and `heldVouches` keeps those in which both signatures hold. Either alone proves nothing: any
+key can name a sign-in key that is not its own, and a sign-in key that names a member key could
+otherwise hang a removal a PC holds against it on that member (`heldOut`), so a device the PC put
+out would put any other out, the one that started the list among them.
+
+### Naming the list to a PC (`ovis-list-name/1`)
+
+A PC that is in an account and follows no list learns its list from a device, inside that device's
+end-to-end session with it, with no press and no person:
+
+```
+bytes     = writeFieldsUnder("ovis-list-name/1", [account, endpoint, key, list, session])   named fields, as a body's
+signature = ECDSA P-256 / SHA-256 by `key`, r || s, 86 base64url characters
+travels as { "list", "key", "signature" }
+```
+
+`key` is the key the list holds the device by (its account key, or its sign-in key before its
+hand-over), `session` the key the session is signed in with, `endpoint` the PC's relay key. A
+device says it only for a list it follows and is a `full` device of (`signNaming`); the PC checks
+the signature against its own account, its own relay key and the key this session is signed in
+with (`heldNaming`). It is bound to that key, not to one session: it holds in every session of
+that key at that PC, and for nobody else.
+
+`pinVerdict` then decides, on the log the PC read with its own proof and with nothing pinned yet.
+A device is **known at this PC** when a key the PC has let in THROUGH THE ACCOUNT for a day is one
+the list holds that device by, or one the list shows handed over to its key, or one that vouches
+for its key. A pairing made at the PC is no such key: the PC cannot tell an owner's pairing from a
+guest's. The PC follows only when both hold:
+
+1. the session is signed in with such a key of the naming device itself, and the list holds the
+   naming key as a device of power `full` that is in (a session carries no other device's naming);
+2. the device that started the list, entry 0's signer, is known at this PC too; or it is out of
+   the list by now, and the PC can place every signer that is in: it knows the signer's own
+   device, or somebody it knows let the signer in, through however many hands, without the first
+   signer among them. The phone that started a list may be replaced; what it let in must not
+   outlast it unseen. A device that was carried in and that this PC does not know, a PC whose keys
+   the first device added, and an open invite it placed cannot be placed. A device this PC put out
+   itself is no obstacle (it stays out here), and stands behind nobody it let in.
+
+So a list made by a key this PC never let in is never followed here while that key is in, whoever
+names it: not on the word of a device that was fooled into it, not on the word of a guest, and not
+on the service's. Once such a key has removed itself and left only devices this PC knows, the PC
+follows: nobody is in who was not the person's, and what it cost is names, since the key that
+started the list held the first epoch's key.
+And a PC that was off, or took this release long after its account moved, follows the next time a
+device it knows opens it, with nobody at it and no record of what it once let in.
+
+| refusal | when | then |
+|---|---|---|
+| `stopped` | it cannot place an entry of the list | it needs a newer Ovis |
+| `other_account`, `other_list` | the log it read is not of its account, or not of the list that was named | nothing |
+| `carried_off_curve` | the list carries in a key that is no point of the curve | nothing; no honest device signs one |
+| `removed` | it holds a removal against the session's key, a key the naming device has been in the list by, or a key that vouches for it | nothing: what it put out names nothing |
+| `session_unknown` | the session's key is none it lets in through the account | nothing |
+| `session_new` | it lets that key in, for less than a day by its two clocks | it is asked again; it says nothing |
+| `not_member` | the list does not hold the naming key as a `full` device that is in | nothing |
+| `session_other_device` | the session's key is not the naming device's own | nothing |
+| `first_signer_removed`, `first_signer_unknown`, `first_signer_new` | it holds a removal against the device that started the list; it does not know that device; it has for less than a day | nothing; nothing; it is asked again |
+| `run_open` | what it read is the beginning of a birth | it is asked again |
+
+The first that applies names the refusal. Nothing here is one-way: a PC that does not follow goes
+on as before the list and is asked again at the next naming. On a yes it pins with the follower's
+`migrated` pin, whose `admitted` is entry 0's signer and every carried key.
+
+The PC asks nothing of the other keys the list was born with; that was asked by the first device
+of the PCs it knows. A removal the PC holds against a device that is neither the naming one nor
+the one that started the list is no reason not to follow: that device stays out at this PC after
+the pin, by whichever key it is in and whichever sign-in key vouches for it (`heldOut`), so
+neither a hand-over nor the pin undoes a removal.
+
+### What is left
+
+- **A key that stood for a day, unnoticed, on one PC the first device asks can be carried in, and
+  is then a full member of the list.** The first device waits three days for every PC it knows to
+  answer; a PC that stays silent that long does not keep such a key out. A key let in at a PC is
+  already a terminal on that PC. With such a key on a PC the service can also start a list of its
+  own and have it followed there, on that PC and no other. This outlasts the breach: it is undone
+  PC by PC, at the PC, and by starting the account over.
+- A device a PC has let in through the account for a day (a borrowed browser among them) names any
+  list to that PC by vouching for its first signer. It is the same residual, on that PC.
+- The service can keep an account from moving, hide a device from the first one (it is then let
+  in as a new device), and keep the lists of two devices that started at once: nobody is in either
+  who was not in before, a device that asks a PC of the other list refuses and says which PC, and
+  it is undone at that PC.
+- A PC that was off from before the move until after the device that started the list left the
+  account follows all the same when it knows everybody who is in, or who let them in. It does not
+  while a device that was carried in, and that it does not let in, is still in the list: that
+  device hands over and vouches, or is removed, and the PC follows.
+- A carried device whose PCs no longer hold the first signer's key (that sign-in has changed, and
+  no PC it knows follows the list yet) does not follow by itself: it asks to be let in.
+- Nobody signs a removal because the account service lists a key as gone or blocked. A carried key
+  that never handed over is let in by a PC that follows the list only while the snapshot also
+  names it, which is local and undone when the snapshot names it again.
+
 ## The vectors
 
 Each file of [`shared/account-list-vectors/envelope/`](../shared/account-list-vectors/envelope) is
@@ -1237,6 +1459,17 @@ Each file of [`shared/account-list-vectors/save/`](../shared/account-list-vector
 holds a `stop`, the `seq` and `by` of its `alarm`, `read_at`, `seen_at`, and `opens`: for each
 named key the role it opens a session as, or the refusal) or `refused` (the refusal). A save that reads and was not rebuilt is written back
 to the same text; one that was rebuilt is written as the build that read it writes it.
+
+Each file of [`shared/account-list-vectors/migrate/`](../shared/account-list-vectors/migrate) has
+`name`, `keys` and one of three cases. `pc`: `entries` (a list from entry 0, each as its one text),
+`endpoint` (the PC's relay key), `session` (the key the session is signed in with), `naming` (what
+the device said, as it travels), `vouches` (as they travel: the test first keeps those that hold),
+`witness` (what the PC holds: `account`, `rows` as `{ key, wall, ran }`, `removed`) and `expect`, the verdict: `{ pin: true, admitted }` or `{ pin: false, why,
+waits, wait }`. `device`: `known` (what the first device knows: `account`, `self`, `member`,
+`devices`, `removed`, and `pcs` with `how`, `known` and what each `says`), `tried` and `expect`:
+`{ start: true, plan }` or `{ start: false, why, wait }`. `join`: `entries`, the device's `keys`,
+the `pcs` it asked, `tried`, and `expect`: `{ pin: true }` or `{ pin: false, why, waits, wait, pcs }`. There is
+one for each answer of each of the three.
 
 ### The vectors of seal/
 
