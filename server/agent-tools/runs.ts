@@ -48,6 +48,12 @@ function saved(value: unknown): value is Saved {
     && "created_ms" in r && typeof r.created_ms === "number" && Number.isFinite(r.created_ms) && "harness" in r && typeof r.harness === "string";
 }
 
+/** Whether the process is known gone: absent, or its pid now another process's. A reading that cannot tell keeps it. */
+function ended(foreground: { pid: number; birth: string }): boolean {
+  const reading = readProcessBirth(foreground.pid);
+  return reading.state === "absent" || reading.state === "identified" && reading.birth.value !== foreground.birth;
+}
+
 export class RunStore {
   private readonly entries = new Map<string, Saved>();
   private readonly pending = new Map<string, { depth: number; hash: string; ceiling?: string }>();
@@ -84,7 +90,10 @@ export class RunStore {
   verify(token: string): Run | null {
     const id = /^ovr1\.([a-f0-9]{16})\.[A-Za-z0-9_-]{43}$/.exec(token)?.[1];
     const row = id ? this.entries.get(id) : undefined;
-    return row && timingSafeEqual(digest(token), Buffer.from(row.hash, "hex")) ? row.run : null;
+    if (!row || !timingSafeEqual(digest(token), Buffer.from(row.hash, "hex"))) return null;
+    // a TUI quit back to its shell leaves the pane open: its run ends with the process it was given to
+    if (row.run.started_by === null && row.foreground && ended(row.foreground)) { this.revoke(row.run.id); return null; }
+    return row.run;
   }
   discovery(token: string) {
     const id = token.split(".")[1];
@@ -129,7 +138,7 @@ export class RunStore {
     this.pending.delete(id);
     if (this.entries.delete(id)) this.save();
     rmSync(join(this.dir, "tokens", `${id}.token`), { force: true });
-    rmSync(join(this.dir, "mcp", `${id}.json`), { force: true });
+    for (const end of [".json", ".js"]) rmSync(join(this.dir, "mcp", `${id}${end}`), { force: true });
   }
   forgetTerminal(self: string, keep?: string): void {
     for (const { run } of this.entries.values()) if (run.self === self && run.id !== keep) this.revoke(run.id);
@@ -145,12 +154,12 @@ export class RunStore {
     const live = new Map(terminals.filter(t => t.state === "live").map(t => [t.address, t]));
     for (const { run, foreground } of this.entries.values()) {
       const t = live.get(run.self);
-      const config = join(this.dir, "mcp", `${run.id}.json`);
+      const config = join(this.dir, "mcp", `${run.id}.json`), extension = join(this.dir, "mcp", `${run.id}.js`);
       const argv = t?.foreground?.argv ?? [];
       const id = keeper(run.self);
       const birth = foreground && t?.foreground?.pid === foreground.pid ? readProcessBirth(foreground.pid) : null;
       const verified = run.started_by === null
-        ? birth?.state === "identified" && birth.birth.value === foreground?.birth && argv.some((word, i) => (word === "--mcp-config" && argv[i + 1] === config) || (word === "--additional-mcp-config" && argv[i + 1] === `@${config}`)
+        ? birth?.state === "identified" && birth.birth.value === foreground?.birth && argv.some((word, i) => (word === "--mcp-config" && argv[i + 1] === config) || (word === "-e" && argv[i + 1] === extension) || (word === "--additional-mcp-config" && argv[i + 1] === `@${config}`)
           || (word.startsWith("mcp_servers.ovis-agent.args=") && argv[i - 1] === "-c" && word.includes(`'${join(this.dir, "tokens", `${run.id}.token`)}'`)))
         : !!id && t?.labels["ovis.acp"] === id && t.labels["ovis.run"] === run.id;
       if (!verified) this.revoke(run.id);

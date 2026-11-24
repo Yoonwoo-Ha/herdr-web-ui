@@ -156,10 +156,12 @@ export async function agentLaunch(paneId: string, agent: AgentPayload, launched?
       ? approvals.hub.launchArgs(kind, paneId, agent.args as string[] | undefined, await approvals.version(kind)) : agent.args as string[] | undefined;
     if (shell) {
       const shellOptions = locator ? { locator } : {};
+      tool = kind === "dsh-tui" ? null : launchHarnessTool(paneId, kind, { args, platform: options.platform ?? process.platform, browsers: null });
       const pid = kind === "dsh-tui" && args !== undefined
         ? await startDshTui(paneId, args, shellOptions, options.home ?? userHome())
-        : await startShellAgent(kind, paneId, args, shellOptions);
+        : await startShellAgent(kind, paneId, tool?.args ?? args, tool ? { ...shellOptions, env: { OVIS_AGENT_SOCKET: tool.socket, OVIS_AGENT_TOKEN_FILE: tool.tokenFile } } : shellOptions);
       if (pid !== null) launched?.(pid);
+      await tool?.confirmed();
     }
     else {
       const given = typeof agent.name === "string" && agent.name.length > 0 ? agent.name : null;

@@ -33,3 +33,38 @@ it("a reserved run is nobody; after bind its depth survives restart, and revocat
     expect(new RunStore(dir).verify(childToken)).toBeNull();
   } finally { rmSync(dir, { recursive: true, force: true }); }
 });
+
+it.skipIf(process.platform === "win32")("a TUI's run ends when its process does, though the pane's shell stays", async () => {
+  const dir = mkdtempSync(join(tmpdir(), "runs-"));
+  try {
+    const store = new RunStore(dir);
+    const tui = Bun.spawn(["sleep", "30"]);
+    const run = store.reserve();
+    run.bind({ self: "t1", harness: "omo", started_by: null, root: run.id, depth: 0 });
+    store.rememberForeground(run.id, tui.pid);
+    const token = readFileSync(run.tokenFile, "utf8");
+    expect(store.verify(token)).not.toBeNull();
+    tui.kill(); await tui.exited;
+    expect(store.verify(token)).toBeNull();
+    expect(existsSync(run.tokenFile)).toBe(false);
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});
+
+it("an OmO or pi still running with its launch extension keeps its run across a restart", () => {
+  const dir = mkdtempSync(join(tmpdir(), "runs-"));
+  try {
+    const store = new RunStore(dir);
+    const live = store.reserve(), gone = store.reserve();
+    live.bind({ self: "t1", harness: "omo", started_by: null, root: live.id, depth: 0 });
+    gone.bind({ self: "t2", harness: "pi", started_by: null, root: gone.id, depth: 0 });
+    for (const run of [live, gone]) store.rememberForeground(run.id, process.pid);
+    const [kept, dropped] = [live, gone].map(run => readFileSync(run.tokenFile, "utf8"));
+    const restored = new RunStore(dir);
+    restored.reconcile([
+      { address: "t1", state: "live", labels: {}, foreground: { pid: process.pid, argv: ["bun", "cli.js", "-e", join(dir, "mcp", `${live.id}.js`)] } },
+      { address: "t2", state: "live", labels: {}, foreground: { pid: process.pid, argv: ["bun", "cli.js", "-e", join(dir, "mcp", `${live.id}.js`)] } },
+    ], () => undefined);
+    expect(restored.verify(kept!)).toMatchObject({ harness: "omo" });
+    expect(restored.verify(dropped!)).toBeNull();
+  } finally { rmSync(dir, { recursive: true, force: true }); }
+});

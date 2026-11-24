@@ -345,8 +345,9 @@ face (orchestrators wrap the command or the MCP tool themselves).
 ### How the tool reaches an agent
 
 - MCP: at launch, for harnesses that take a server on the command line (Claude, Codex, Copilot), the
-  way the browser tool is added (read, `withBrowserTool` in `server/agent-launch.ts`). Ovis never
-  writes an agent's own settings.
+  way the browser tool is added (read, `withBrowserTool` in `server/agent-launch.ts`); for OmO and pi,
+  an extension written for the launch and added with `-e`, which registers the server for that run
+  (`pi.registerMcpServer`, `server/agent-tools/launch.ts`). Ovis never writes an agent's own settings.
 - Shell: `ovis agent` for any agent with a shell. Its run token must be in the terminal's environment.
   herdr's `agent.start` takes no environment (plan 12.2), so the first version is herdr-core terminals
   only.
