@@ -36,6 +36,8 @@ app/www/
 # the hosted origin it hands the native builds (app/scripts/hosted-origin.ts)
 app/android/app/hosted-origin.properties
 app/ios/hosted-origin.generated.xcconfig
+# the hosted shell the phone apps carry (app/scripts/bundled-shell.ts)
+app/bundled-shell/
 
 # Play upload keys and their passwords (app/store/android.md), wherever they are put: never committed
 *.jks

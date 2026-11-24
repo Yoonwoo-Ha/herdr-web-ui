@@ -117,7 +117,21 @@ final class Home {
      * and as long as a PC gets to answer (PCStore.ANSWER_SECONDS) once its page is on its way, which a slow link needs.
      */
     static boolean timedOut(long elapsedMs, boolean answered) {
-        return elapsedMs >= (answered ? PCStore.ANSWER_SECONDS * 1000L : LOAD_MS);
+        return timedOut(elapsedMs, answered, false);
+    }
+
+    /**
+     * timedOut for home that is the shell this build carries (`bundled`, BundledShell): it waits on no network, so it
+     * gets no LOAD_MS for an answer, only the time a PC gets once it answered, and that clock running out lifts its
+     * cover over what it shows (clockRanOut) rather than putting the app's own page in its place.
+     */
+    static boolean timedOut(long elapsedMs, boolean answered, boolean bundled) {
+        return elapsedMs >= (answered || bundled ? PCStore.ANSWER_SECONDS * 1000L : LOAD_MS);
+    }
+
+    /** What home's clock running out (timedOut) is: the app's own page in its place, or the bundled shell's cover lifting. */
+    static Event clockRanOut(boolean bundled) {
+        return bundled ? Event.LOADED : Event.TIMED_OUT;
     }
 
     /**

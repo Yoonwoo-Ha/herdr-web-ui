@@ -14,6 +14,13 @@ import com.getcapacitor.annotation.PermissionCallback;
 @CapacitorPlugin(name = "HerdrShell", permissions = { @Permission(alias = "camera", strings = { Manifest.permission.CAMERA }) })
 public class HerdrShellPlugin extends Plugin {
     private final PCStore.Openings openings = new PCStore.Openings();
+
+    /** Capacitor loads its plugins before the WebView's first page: what that page must have from its start is added here. */
+    @Override
+    public void load() {
+        if (getActivity() instanceof MainActivity) ((MainActivity) getActivity()).beforeFirstPage(getBridge());
+    }
+
     @PluginMethod
     public void getState(PluginCall call) {
         JSObject state = new JSObject();

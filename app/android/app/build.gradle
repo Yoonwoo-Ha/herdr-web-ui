@@ -4,11 +4,16 @@ apply plugin: 'com.android.application'
 // from OVIS_APP_URL, written to hosted-origin.properties (app/scripts/hosted-origin.ts), else app.ovis.sh.
 // BuildConfig.HOME_HOSTED: the app's first screen is the hosted Connect a PC screen, unless that run had
 // OVIS_APP_HOME=bundled, which keeps the app's own page as the first screen.
+// BuildConfig.SHELL_BUNDLED: the app serves the hosted shell from the copy it carries (app/bundled-shell, written by
+// `bun run build:web`: app/scripts/bundled-shell.ts) at APP_ORIGIN itself, unless that run had OVIS_APP_SHELL=hosted,
+// which loads it from the network there as before (a preview app, the QA twin): never the store app (below).
 def hostedOrigin = new Properties()
 def hostedOriginFile = file("hosted-origin.properties")
 if (hostedOriginFile.isFile()) hostedOriginFile.withInputStream { hostedOrigin.load(it) }
 def appOrigin = hostedOrigin.getProperty("appOrigin", "https://app.ovis.sh")
 def homeHosted = hostedOrigin.getProperty("appHome", "hosted") != "bundled"
+def shellBundled = hostedOrigin.getProperty("appShell", "bundled") != "hosted"
+def shellAssets = file("../../bundled-shell")
 
 // Packaging fails when the pages copied into the app (`bunx cap sync android`) name another origin or were built for
 // another first screen: `bun run build:web` for the other platform's build rewrites hosted-origin.properties without
@@ -26,6 +31,23 @@ def checkHostedOrigin = tasks.register("checkHostedOrigin") {
         def nativeHome = homeHosted ? "hosted" : "bundled"
         if (pagesHome != nativeHome) {
             throw new GradleException("${shellJs} was built for ${pagesHome ? "the ${pagesHome}" : 'no'} first screen and BuildConfig.HOME_HOSTED says ${nativeHome}: run `bun run build:web` with the OVIS_APP_HOME this build is for, then `bunx cap sync android`")
+        }
+        def carried = new File(shellAssets, "shell/index.html").isFile() && new File(shellAssets, "shell-policy.json").isFile()
+        if (shellBundled && !carried) {
+            throw new GradleException("BuildConfig.SHELL_BUNDLED is true and ${shellAssets} holds no shell: run `bun run build:web` (OVIS_APP_SHELL_ARCHIVE, _SHA256 and _TAG name a release's shell, OVIS_APP_SHELL_DIR a folder, else it builds one from this checkout), then `bunx cap sync android`. OVIS_APP_SHELL=hosted loads the shell from the network instead, never in a store build")
+        }
+        // the policies the app sends with the shell (BundledShell.policiesOf refuses the same at run time)
+        if (shellBundled) {
+            def policy = null
+            try { policy = new groovy.json.JsonSlurper().parse(new File(shellAssets, "shell-policy.json")) } catch (Exception unreadable) {}
+            def page = policy instanceof Map ? policy.page : null
+            def render = policy instanceof Map ? policy.render : null
+            if (!(page instanceof String && page.contains("default-src") && render instanceof String && render.startsWith("sandbox allow-scripts"))) {
+                throw new GradleException("${new File(shellAssets, 'shell-policy.json')} does not hold the shell's two policies ({page, render}): run `bun run build:web` again")
+            }
+        }
+        if (!shellBundled && shellAssets.exists()) {
+            throw new GradleException("BuildConfig.SHELL_BUNDLED is false (OVIS_APP_SHELL=hosted) and ${shellAssets} still holds a shell from another run: run `bun run build:web` with the OVIS_APP_SHELL this build is for")
         }
     }
 }
@@ -48,6 +70,7 @@ android {
         testInstrumentationRunner "androidx.test.runner.AndroidJUnitRunner"
         buildConfigField "String", "APP_ORIGIN", "\"${appOrigin}\""
         buildConfigField "boolean", "HOME_HOSTED", "${homeHosted}"
+        buildConfigField "boolean", "SHELL_BUNDLED", "${shellBundled}"
         aaptOptions {
              // Files and dirs to omit from the packaged assets dir, modified to accommodate modern web apps.
              // Default: https://android.googlesource.com/platform/frameworks/base/+/282e181b58cf72b6ca770dc7ca5f91f135444502/tools/aapt/AaptAssets.cpp#61
@@ -90,9 +113,11 @@ android {
             }
         }
     }
-    // the instrumented SSH tests (SshFixtureTest) read the same test-only keys as the JVM tests
+    // the instrumented SSH tests (SshFixtureTest) read the same test-only keys as the JVM tests; the carried shell is
+    // an assets folder of its own, which `bunx cap sync` leaves alone and Capacitor never serves at the app's origin
     sourceSets {
         androidTest.assets.srcDirs += ['src/test/resources']
+        main.assets.srcDirs += ['../../bundled-shell']
     }
     buildTypes {
         release {
@@ -100,6 +125,35 @@ android {
             minifyEnabled false
             proguardFiles getDefaultProguardFile('proguard-android.txt'), 'proguard-rules.pro'
         }
+    }
+}
+
+// The store app (its application ID in a release build) and any app bundle of any build type (an .aab, which is what
+// Google Play takes: `bundle`, `bundleDebug`, `bundleRelease`, `package…Bundle`, `sign…Bundle`) carry a release's
+// shell, whole: a hosted shell (OVIS_APP_SHELL=hosted) is a test build's, and a shell built from a checkout or handed
+// over as a folder is no release's (shell-provenance.json, app/scripts/bundled-shell.ts). A hosted debug APK stays.
+gradle.taskGraph.whenReady { graph ->
+    def store = graph.allTasks.find { task ->
+        task.project == project && (
+            task.name ==~ /bundle([A-Z][a-z]*)?|(package|sign)[A-Z][a-z]*Bundle/ ||
+                (task.name ==~ /(assemble|bundle|install|package|sign)Release(Bundle)?/ && android.defaultConfig.applicationId == "sh.ovis.app")
+        )
+    }
+    if (!store) return
+    def release = "run `bun run build:web` with OVIS_APP_SHELL_ARCHIVE=<the tag's dist-shell.tar.gz>, OVIS_APP_SHELL_SHA256=<its SHA-256> and OVIS_APP_SHELL_TAG=<the tag>, then `bunx cap sync android`"
+    if (!shellBundled) {
+        throw new GradleException("${store.name}: this build loads the shell from the network (OVIS_APP_SHELL=hosted, the default with OVIS_APP_URL), which neither the store app nor any app bundle does: ${release}; a test APK (assemble, install) with another application ID, or of the debug build, may stay hosted")
+    }
+    def provenanceFile = new File(shellAssets, "shell-provenance.json")
+    def provenance = null
+    try { provenance = new groovy.json.JsonSlurper().parse(provenanceFile) } catch (Exception unreadable) {}
+    if (!(provenance instanceof Map) || provenance.source != "release" || !(provenance.tag ==~ /v\d+\.\d+\.\d+(-[0-9A-Za-z.-]+)?/) || !(provenance.sha256 ==~ /[0-9a-f]{64}/)) {
+        throw new GradleException("${store.name}: the store app carries a release's verified shell, and ${provenanceFile} says ${provenance instanceof Map ? "it is a ${provenance.source}'s" : 'nothing'}: ${release}")
+    }
+    def index = new File(shellAssets, "shell/index.html")
+    def missing = index.isFile() ? (index.text =~ /\b(?:src|href)="\/(assets\/[^"?#]+)"/).collect { it[1] }.unique().findAll { !new File(shellAssets, "shell/${it}").isFile() } : ["index.html"]
+    if (missing) {
+        throw new GradleException("${store.name}: the carried shell lacks files its index.html starts with (${missing.join(', ')}), so the app would open blank: ${release}")
     }
 }
 

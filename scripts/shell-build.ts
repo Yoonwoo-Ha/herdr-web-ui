@@ -123,6 +123,15 @@ export function shellRedirects(): string {
 }
 
 /**
+ * The shell's two policies, as every host of it sends them (Pages `_headers`, the Caddyfile, and the Android app that
+ * carries the shell, which reads them back from the `_headers` of the copy it carries: app/scripts/bundled-shell.ts):
+ * `page` on every path, `render` alone on a PC's render host.
+ */
+export function shellPolicies(): { page: string; render: string } {
+  return { page: shellContentSecurityPolicy(Object.values(REGIONAL_APPS)), render: pagePolicy(null) };
+}
+
+/**
  * Pages `_headers`: the shell's policy on everything, the render host's own policy on its path
  * (the first is detached there: Pages joins a header set twice with a comma), and the caching
  * rules the PC's server applies (server/static.ts): hashed assets for good, the shell, the worker
@@ -130,13 +139,14 @@ export function shellRedirects(): string {
  * lacks is a 404 (MISSING_ASSET_PAGE), never the page under the assets' year-long caching.
  */
 export function shellHeaders(): string {
+  const policies = shellPolicies();
   return [
     "# Derived from the PC server's policy: server/static.ts shellContentSecurityPolicy(Object.values(REGIONAL_APPS)) (scripts/shell-build.ts)",
     "/*",
-    `  Content-Security-Policy: ${shellContentSecurityPolicy(Object.values(REGIONAL_APPS))}`,
+    `  Content-Security-Policy: ${policies.page}`,
     "",
     // and render.html at its own address the same, so it never runs under the shell's policy
-    ...[RENDER_PATH, RENDER_DOCUMENT].flatMap((path) => [path, "  ! Content-Security-Policy", `  Content-Security-Policy: ${pagePolicy(null)}`, ""]),
+    ...[RENDER_PATH, RENDER_DOCUMENT].flatMap((path) => [path, "  ! Content-Security-Policy", `  Content-Security-Policy: ${policies.render}`, ""]),
     "/assets/*",
     `  Cache-Control: ${IMMUTABLE_CACHE}`,
     "",
@@ -185,8 +195,8 @@ export function shellCaddyfile(site: string, root = "/opt/ovis-shell/current"): 
     `\t@hidden path /_headers /_redirects`,
     `\t@asset {\n\t\tpath /assets/*\n\t\tfile\n\t}`,
     `\t@missingasset {\n\t\tpath /assets/*\n\t\tnot file\n\t}`,
-    `\theader @notrender Content-Security-Policy "${shellContentSecurityPolicy(Object.values(REGIONAL_APPS))}"`,
-    `\theader @render Content-Security-Policy "${pagePolicy(null)}"`,
+    `\theader @notrender Content-Security-Policy "${shellPolicies().page}"`,
+    `\theader @render Content-Security-Policy "${shellPolicies().render}"`,
     // only a file there is pinned for a year: a missing one is file_server's 404, asked for again (MISSING_ASSET_PAGE)
     `\theader @asset Cache-Control "${IMMUTABLE_CACHE}"`,
     `\theader @missingasset Cache-Control "no-store"`,

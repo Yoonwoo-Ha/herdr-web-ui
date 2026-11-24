@@ -146,6 +146,19 @@ public class HomeTest {
     }
 
     @Test
+    public void theBundledShellWaitsOnNoNetworkAndItsClockLiftsTheCoverInsteadOfFallingBack() {
+        // no eight seconds for an answer: the shell is the app's own copy
+        assertEquals(false, Home.timedOut(8000, false, true));
+        assertEquals(false, Home.timedOut(PCStore.ANSWER_SECONDS * 1000L - 1, false, true));
+        assertEquals(true, Home.timedOut(PCStore.ANSWER_SECONDS * 1000L, false, true));
+        assertEquals(Home.timedOut(8000, false), Home.timedOut(8000, false, false));
+        assertEquals(Action.LIFT_COVER, Home.on(Phase.LOADING, Home.clockRanOut(true)));
+        assertEquals(Phase.SHOWN, Home.after(Phase.LOADING, Home.clockRanOut(true)));
+        // the shell from the network still gives way to the app's own page
+        assertEquals(Action.FALL_BACK, Home.on(Phase.LOADING, Home.clockRanOut(false)));
+    }
+
+    @Test
     public void backGoesThroughThePagesOwnHistoryFirstAtHome() {
         assertEquals(Back.PAGE, Home.back(Screen.HOME, HOSTED, false, true, true, true));
         assertEquals(Back.PAGE, Home.back(Screen.HOME, HOSTED, false, false, false, true));

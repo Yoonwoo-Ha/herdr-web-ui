@@ -504,7 +504,7 @@ final class PCStore {
         return path;
     }
 
-    private static String percentDecoded(String text) {
+    static String percentDecoded(String text) {
         ByteArrayOutputStream out = new ByteArrayOutputStream();
         for (int i = 0; i < text.length(); i++) {
             char c = text.charAt(i);

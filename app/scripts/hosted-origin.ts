@@ -1,9 +1,10 @@
 /**
  * What a build of the phone apps takes from its environment, for the app's pages and the native code alike.
  * The hosted shell's origin: OVIS_APP_URL, for a test build whose relay pairing links point at a shell served
- * elsewhere, else each part keeps its own https://app.ovis.sh. The first screen: OVIS_APP_HOME (appHome).
+ * elsewhere, else each part keeps its own https://app.ovis.sh. The first screen: OVIS_APP_HOME (appHome). Where the
+ * Android app takes the shell from: OVIS_APP_SHELL (bundled-shell.ts appShell).
  * build-web.ts gives the origin to the app's pages (APP_ORIGIN in web/shell.js) and, through the files below, both to
- * the native code: BuildConfig.APP_ORIGIN and HOME_HOSTED on Android (android/app/build.gradle reads
+ * the native code: BuildConfig.APP_ORIGIN, HOME_HOSTED and SHELL_BUNDLED on Android (android/app/build.gradle reads
  * hosted-origin.properties), OvisAppOrigin and OvisAppHome in the iOS app's Info.plist (ios/hosted-origin.xcconfig
  * includes hosted-origin.generated.xcconfig), so a build cannot give them two origins.
  */
@@ -36,19 +37,21 @@ export function appHome(value: string | undefined, account: boolean): "hosted" |
 }
 
 /**
- * Writes `origin` and the first screen (`home`) where the native builds of `app` read them: only what differs from
- * their own defaults (null, and hosted), and no file when nothing does.
+ * Writes `origin`, the first screen (`home`) and, for Android, where the shell comes from (`shell`) where the native
+ * builds of `app` read them: only what differs from their own defaults (null, hosted and bundled), and no file when
+ * nothing does. The iOS app does not carry the shell yet, so its file never names it.
  */
-export function writeNativeOrigin(app: string, origin: string | null, home: "hosted" | "bundled" = "hosted"): void {
+export function writeNativeOrigin(app: string, origin: string | null, home: "hosted" | "bundled" = "hosted", shell: "bundled" | "hosted" = "bundled"): void {
   const android = join(app, "android/app/hosted-origin.properties");
   const ios = join(app, "ios/hosted-origin.generated.xcconfig");
-  if (origin === null && home === "hosted") {
-    rmSync(android, { force: true });
+  const bundled = home === "bundled";
+  const androidLines = `${origin === null ? "" : `appOrigin=${origin}\n`}${bundled ? "appHome=bundled\n" : ""}${shell === "hosted" ? "appShell=hosted\n" : ""}`;
+  if (androidLines === "") rmSync(android, { force: true });
+  else writeFileSync(android, androidLines);
+  if (origin === null && !bundled) {
     rmSync(ios, { force: true });
     return;
   }
-  const bundled = home === "bundled";
-  writeFileSync(android, `${origin === null ? "" : `appOrigin=${origin}\n`}${bundled ? "appHome=bundled\n" : ""}`);
   // "//" starts a comment in an xcconfig file; "$()" expands to nothing
   writeFileSync(ios, `${origin === null ? "" : `OVIS_APP_ORIGIN = ${origin.replace("//", "/$()/")}\n`}${bundled ? "OVIS_APP_HOME = bundled\n" : ""}`);
 }

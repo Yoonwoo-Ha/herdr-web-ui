@@ -50,18 +50,31 @@ Play holds the app signing key.
 
 `app/android/app/build.gradle` signs a release with the upload key when
 `OVIS_UPLOAD_PROPERTIES` names that file. A missing file or a missing entry fails a release
-build with what is wrong, never a debug build. Build from `main` (after #1697 is merged, so the
-test build has backups off and the error page reasons):
+build with what is wrong, never a debug build.
+
+The app carries the hosted shell of a release ([The bundled shell](../../docs/native-app.md#the-bundled-shell-android)),
+and Gradle builds the store app only from one: the tag's `dist-shell.tar.gz`, checked against the SHA-256 the
+release published with it, never a shell built on this machine, which would carry this machine's environment
+(`OVIS_ACCOUNT_SERVICE_URL` and the like) into the app. Build from the same tag:
 
 ```bash
-git switch main && git pull
+tag=v0.5.10   # the release whose shell the app carries
+git switch --detach "$tag"
 bun install && (cd app && bun install)
-cd app && bun run build:web && bunx cap sync android
+dir="$(mktemp -d)"
+gh release download "$tag" --pattern 'dist-shell.tar.gz*' --dir "$dir"
+cd app && OVIS_APP_SHELL_ARCHIVE="$dir/dist-shell.tar.gz" OVIS_APP_SHELL_SHA256="$(cut -d ' ' -f 1 "$dir/dist-shell.tar.gz.sha256")" \
+  OVIS_APP_SHELL_TAG="$tag" bun run build:web && bunx cap sync android
 cd android && OVIS_GOOGLE_SERVICES=~/.config/ovis-push/google-services.json \
   OVIS_UPLOAD_PROPERTIES=~/.config/ovis-android/upload.properties ./gradlew bundleRelease   # without OVIS_GOOGLE_SERVICES the bundle has no push
 # app/android/app/build/outputs/bundle/release/app-release.aab
 keytool -printcert -jarfile app/build/outputs/bundle/release/app-release.aab   # shows your upload key
 ```
+
+`bundleRelease` refuses a shell that is not a release's (`app/bundled-shell/shell-provenance.json`), one whose
+`index.html` misses a file it starts with, and a build that loads the shell from the network
+(`OVIS_APP_SHELL=hosted`, the default with `OVIS_APP_URL`). The release that ships also adds its line to
+`server/relay/store-app-versions.json` (#4557), which the PCs' app floor reads.
 
 | Field | Now | Rule |
 |---|---|---|

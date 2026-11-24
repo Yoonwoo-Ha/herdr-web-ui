@@ -109,8 +109,9 @@ relay's FCM credentials are a service account key of the app's Firebase project,
   `google-services.json` from the Firebase project (see that README). The Android app itself exists
   already (see [The Android app](#the-android-app)): the maintainer tests on a Galaxy, not an
   iPhone.
-- Speed: measure what is slow before changing anything; bundling the UI in the app is off the
-  table while the PC serves it.
+- Speed: measure what is slow before changing anything. The PC still serves its own UI at its own
+  address; the hosted shell (relay PCs, home) is carried in the Android app since 2026-11-24 (see
+  [The bundled shell](#the-bundled-shell-android)).
 
 ## Spike results (2026-10-19)
 
@@ -439,7 +440,11 @@ Home is up only when its page is the hosted app's and has drawn: it carries `<me
 (the released front page and the next both do) and its `#root` holds what the client rendered, no longer
 index.html's loading spinner. An empty 200 or another page of that origin never lifts the cover, so the
 clock runs on to the fallback. Only time in front counts against it (`Home.Clock`): nothing is added
-while the app is behind another, though its timer may run on there.
+while the app is behind another, though its timer may run on there. In an Android build that carries the
+shell ([The bundled shell](#the-bundled-shell-android)) home is the app's own copy at the same address: it
+waits on no network, so it gets no 8 seconds for an answer, and once the 20 seconds a PC gets are up its
+cover lifts over whatever it shows (`Home.timedOut(…, bundled)`, `Home.clockRanOut`) instead of the app's own
+page taking its place; a main-frame failure there still gives way to the app's own page.
 
 Fallback: the flag `homeFailed` is set, in memory only, and the app's own page comes up in a new web
 view (the old one goes, so a load that finishes late cannot take the person off what they type). The page
@@ -732,12 +737,17 @@ Build and install, on a PC with the Android SDK and JDK 21:
 
 ```bash
 bun install && cd app && bun install
-bun run build:web && bunx cap sync android
+bun run build:web && bunx cap sync android   # OVIS_APP_SHELL_DIR=<dist-shell> to carry a given shell
 cd android && ANDROID_HOME=~/Android/Sdk ./gradlew assembleDebug
 # app/android/app/build/outputs/apk/debug/app-debug.apk
 ```
 
-For Google Play, `./gradlew bundleRelease` makes `app/build/outputs/bundle/release/app-release.aab`.
+`bun run build:web` builds the shell the app carries from this checkout (about 20 s) unless
+`OVIS_APP_SHELL_DIR` names one; with `OVIS_APP_URL` (a preview) it loads the shell from the network
+instead ([The bundled shell](#the-bundled-shell-android)).
+
+For Google Play, `./gradlew bundleRelease` makes `app/build/outputs/bundle/release/app-release.aab`,
+which Gradle refuses to make from a build that loads the shell from the network.
 It is signed with the upload key when `OVIS_UPLOAD_PROPERTIES` names a properties file holding
 `storeFile`, `storePassword`, `keyAlias` and `keyPassword` (a relative `storeFile` is taken from
 `app/android/app`; a file that is missing or lacks one of them fails a release build, naming
@@ -770,6 +780,102 @@ were read through the WebView's DevTools socket (`webview_devtools_remote_<pid>`
 Still open on Android:
 
 - QR scanning and IME were not tried in the emulator; a physical phone should check them.
+
+### The bundled shell (Android)
+
+The Android app carries the hosted shell (`dist-shell`: home's Connect a PC and My PCs, and every relay PC's
+page) and answers it from its assets at the hosted origin itself, `BuildConfig.APP_ORIGIN`
+(`https://app.ovis.sh`, or a test build's `OVIS_APP_URL`), with no network. The origin string stays, so a
+person who updates from a build that loaded the shell from there keeps that origin's storage: the account's
+sign-in and keys (IndexedDB `ovis-account`, `ovis-relay`) and the pairings. Decided 2026-11-24 for both store
+apps; the iOS app moves to an origin of its own in a later change.
+
+Build (`app/scripts/bundled-shell.ts`, called by `build-web.ts`):
+
+- `OVIS_APP_SHELL` is `bundled` or `hosted`. Unset, a build of the production origin (no `OVIS_APP_URL`, what a
+  store build is) is `bundled`, and a build with `OVIS_APP_URL` (the owner's preview app, the QA twin) is
+  `hosted`: the shell from the network at that origin, exactly as before. `BuildConfig.SHELL_BUNDLED` carries
+  the choice (`appShell=hosted` in `hosted-origin.properties`); Gradle refuses `assembleRelease`,
+  `bundleRelease` and the like of a hosted build whose application ID is the store's, and any app bundle of
+  one, so a hosted shell is never uploaded.
+- Which shell is carried: a release's (`OVIS_APP_SHELL_ARCHIVE`, the tag's `dist-shell.tar.gz`, unpacked only
+  once its SHA-256 is `OVIS_APP_SHELL_SHA256` and only as plain files and folders, with `OVIS_APP_SHELL_TAG`), a
+  folder (`OVIS_APP_SHELL_DIR`), or, with neither, one built from this checkout (`vite build --mode shell`), as
+  the demo is. `shell-provenance.json` beside the copy says which (`release` with its tag and SHA-256, `folder`
+  or `checkout`, and the copy's build.json revision), and Gradle packages the store app (its application ID in a
+  release build, or any app bundle) only from a `release` whose `index.html` finds every `/assets/` file it starts
+  with; a debug build from the checkout stays possible. It goes to `app/bundled-shell/shell/`, cleared first, written once for every platform outside `app/www`, so
+  `bunx cap sync` leaves it alone and the app's own origin (`https://localhost`) never serves it; the Android
+  build adds it as an assets folder of its own (`build.gradle`). The `.gz`/`.br` sidecars, `_headers`,
+  `_redirects` and `.well-known/` stay out. The two policies come from that copy's own `_headers`
+  (`shell-policy.json` beside it), which `scripts/shell-build.ts` writes from `shellPolicies()`: a test
+  reads them back from `shellHeaders()`, so the app and Pages cannot send different ones. The copy fails the
+  build over 64 MB or under 14 MB (31 MB on 2026-11-24: `SHELL_BUDGET_BYTES`, `SHELL_FLOOR_BYTES`), or when a
+  file its `index.html` starts with is missing (a partial unpack would open blank). It is not shared with the bundled demo: 427
+  files are the same bytes, but under other names (a 10-character hash against 8), so sharing would need a
+  name map in the app for 9 MB of the APK's +13.4 MB.
+- Gradle's `checkHostedOrigin` fails a bundled build whose folder holds no shell or no readable policies (both
+  strings, the render one with its sandbox), and a hosted one that still holds a shell from another run.
+
+Serving (`BundledShell.java`, `MainActivity`):
+
+- The activity opens the hosted origin as it always did: `server.url` is that origin, so Capacitor's bridge
+  origin rules, its document-start bridge script and every plugin's and page's gate that reads
+  `getServerUrl()`, the bridge's host or `APP_ORIGIN` decide as with the shell from the network, and the app's
+  own pages keep their own origin (`https://localhost`: `error.html`, its `HerdrErrorPage` listener and
+  `/_ovis/retry`, the connect page, the demo). Only the answers change: `shouldInterceptRequest` (the
+  activity's client, and a client of its own set from `HerdrShellPlugin.load`, before Capacitor loads the
+  first page, which it otherwise asked for through Capacitor's own client and so over the network) and the
+  `ServiceWorkerController` client (Capacitor's is turned off for it) answer every request to that origin
+  from the copy, never Capacitor's local server, which would take the network for it. Whether a request is on
+  that origin is read from its parts (scheme, host, port), never by parsing its whole URL again: a URL
+  `java.net.URI` refuses (WebView keeps `|^{}` and a backtick in a query and `[]` in a path as they are) once
+  counted as another origin and reached the network; `MainActivity`'s main-frame origin check reads the parts
+  too. Pages' routes (`BundledShell.route`): `/s/<id>/manifest.webmanifest` the shell's manifest,
+  `/s/<id>/~render` `render.html` with the render host's policy alone, anything else under `/s/` the shell
+  (`/s/<id>` too: an answer cannot redirect), a file of the shell where there is one, a 404 for a missing
+  hashed asset under `/assets/`, and the shell for any other address. Only GET and HEAD; Capacitor's own
+  paths (`/_capacitor_file_/`, `/_capacitor_content_/`, its HTTP interceptor) are a 404 there, as the client
+  asks for none of them; a path a browser would not load as written is a 404. Every answer carries the shell's
+  policy (`~render` the render host's alone), `X-Content-Type-Options: nosniff` and `no-cache`.
+- Every `sw.js` (`/sw.js`, `/s/<id>/sw.js`) answers a worker that retires: it takes the old worker's place
+  at once, unregisters itself and deletes the caches but `ovis-files-v1` (the client's fonts), with no fetch
+  handler meanwhile. A worker the network's copy registered then goes at its next update check rather than
+  serve that copy for a day, and one that copy registers again while it runs once goes the same way.
+- The first bundled start after the shell came from the network (`BundledShell.needsBoot`, kept in the
+  preferences `ovis-bundled-shell`) opens the boot page first, `/_ovis/boot`, outside every PC's scope, which
+  no worker controls: it unregisters every worker of the origin and deletes their caches (not
+  `ovis-files-v1`), tells `OvisBoot` (a listener only that start has, heard only from that page's main frame and
+  dropped once heard), and replaces itself with the page asked for, carried in its fragment and only on that
+  origin. So a worker of the network's copy, whose kept shell (a day old at most) would otherwise answer the
+  first page of a relay PC, never serves it once. Storage is untouched: `WebStorage.deleteAllData` would take
+  the keys with it. It goes on with the page's whole address on its own origin (`location.replace(asked.href)`,
+  so a path such as `//host/x` stays a path). A clean-up that fails or takes over 3 s is tried once more; after a
+  second failure it never goes on to a PC's page (`/s/`), which a worker left behind could answer, but to the
+  front page, which no worker controls, and the next start tries again. A build that loads the shell from the
+  network marks it needed again. The boot page stands in for the client's own first-load rule ("open `/` first",
+  #4557): it runs before whatever the first page is (home, a saved relay PC, a link or an alert that opens a
+  PC's page), so the client finds nothing left to retire and reloads nothing.
+- The bundled shell's pages, on the hosted origin and in the main frame alone, get `window.__ovisAppShell = {
+  bundled: true, platform: "android", appVersion, build }` (frozen; `versionName` and `versionCode`) at document
+  start, before their own scripts. Never a frame, a PC's own page (its own origin), the render host (its sandbox
+  has no origin), the app's own pages or the demo; a hosted build injects nothing. The client reads it to register no worker, never
+  reload for a newer hosted copy, and compare its own version with the PC's floor. Its "Update the app" button is a
+  `target=_blank` link to the Play page, which the WebView takes as a main-frame link to another origin: `MainActivity`
+  hands it to the system (the Play app, else the browser), never opening it in the WebView.
+- A build that carries the shell and cannot serve it never loads it from the network: a WebView without
+  document-start scripts or message listeners, or a copy without its index page or readable policies, opens the
+  app's own `error.html` at `https://localhost` saying why ("update Android System WebView", or reinstall the
+  app); its Change PC leads to the app's own page (Tailscale, SSH, an address), as home's fallback does.
+
+What was checked on 2026-11-24 (Android 16 emulator, WebView 133, the QA twin `sh.ovis.app.previewqa`): a
+hosted build (14) loaded `https://app.ovis.sh`, wrote a marker and a non-extractable ECDSA key into IndexedDB,
+and opened a relay PC's scope, whose worker kept the hosted shell; the bundled build (15), installed over it
+with the network off, opened that scope with the bundled script, no worker and no shell cache, the marker
+there and the key signing, `window.__ovisAppShell` set, the policy enforced on the page (an inserted inline or
+`data:` script refused) and on `~render` (an opaque origin with no bridge, no fetch and no storage). With the
+network on, no request to the hosted origin reached it. Each gated plugin call answered the same from the
+app's own page, `error.html`, home and a relay PC's page in both builds.
 
 ### PCs over SSH
 
