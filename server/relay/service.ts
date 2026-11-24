@@ -1,5 +1,5 @@
 import { MACHINE_DIRECT_CARRIER_ENABLED, MachineCodeForAccountError } from "../machine-profile.ts";
-import { existsSync, readFileSync } from "node:fs";
+import { existsSync, readFileSync, rmSync } from "node:fs";
 import { hostname } from "node:os";
 import { join } from "node:path";
 import type { DeviceConnection } from "../../shared/access.ts";
@@ -314,6 +314,17 @@ export class RelayService {
     const unlisted = this.passKeeper?.current() === null && this.passKeeper.refusal === "not_listed";
     if (before !== this.passAccount() || unlisted) void this.passKeeper?.refresh();
     return true;
+  }
+
+  /**
+   * Forgets the account named for this PC, as before any was (`ovis join` that ended unbound puts back what it found).
+   * A no-account code made under the one named ends, as naming another ends it.
+   */
+  clearRelayAccount(): void {
+    const before = this.passAccount(), named = this.savedRelayAccount();
+    rmSync(this.relayAccountPath(), { force: true });
+    if (named !== null) this.services?.devices.endNoAccountPairing();
+    if (before !== this.passAccount()) void this.passKeeper?.refresh();
   }
 
   /** Whether `relay` is one of Ovis's own: the only relays a pass goes to. */

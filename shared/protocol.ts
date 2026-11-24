@@ -628,6 +628,10 @@ export interface RelayStatus {
    * with `x-ovis-no-account-only`). Absent from an older server.
    */
   readonly account_named?: boolean;
+  /** This PC's relay ID (null before it has one), to this PC's own window and CLI only; absent elsewhere and from an older server. */
+  readonly server_id?: string | null;
+  /** The account named for this PC (`account_named`), to its own window and CLI only, as `server_id`. */
+  readonly relay_account?: string | null;
   /**
    * Direct connections on this PC's networks (docs/relay.md): whether they are on, and the carriers
    * listened on now (none while the relay is off). Absent from a server without them.

@@ -13,6 +13,8 @@ import { accountOsOf, type AccountOs, type AccountPlace } from "./account-asker.
 import { isWssOrigin } from "./relay-offer.ts";
 import { fromBase64Url, toBase64Url } from "./relay-pair-sas.ts";
 import { deriveServerId, proofKey, serverChallenge, verifyServerProof } from "./relay-server-proof.ts";
+import { isListKeyEncoding, isListPoint } from "./account-list-entry.ts";
+import { verifyInviteRedeem } from "./account-list-invite.ts";
 
 export const CHALLENGE_TTL_MS = 60_000;
 /** How long a PC's own leave (POST /v1/pcs/{server_id}/leave) keeps a PUT without its proof from listing it again. */
@@ -109,6 +111,20 @@ export const PC_ADMITS_PER_DAY = 3;
 export interface FakeAdmission { id: string; server_id: string; account: string; label: string; key: string; at: string; os: AccountOs | null; country: string | null; city: string | null }
 /** How long an admission reaches its PC's mailbox: the PC lets a waiting account device compare digits only within it. */
 export const ADMISSION_TTL_MS = 10 * 60_000;
+/** How long a PC invite works, once. */
+export const PC_INVITE_TTL_MS = 15 * 60_000;
+/** Open PC invites (POST /v1/pc-invites) one account may hold at once. */
+export const INVITES_OPEN_MAX = 5;
+/** How long GET /v1/pc-invites still lists an invite after a PC used it. */
+export const INVITE_USED_SHOWN_MS = 24 * 60 * 60_000;
+/** Invites one account may make, and redeems one PC may try, in a window; past it 429 `rate_limited` (retry-after 60). */
+export const INVITES_PER_WINDOW = 20;
+export const REDEEMS_PER_WINDOW = 10;
+interface FakeInvite {
+  /** `key`: the invite's public key (`invite_key`), all the service is given of it: the join line's private key never comes here */
+  id: string; account: string; key: string; auto: boolean; family: string; madeAt: number; revoked: boolean;
+  used: { at: number; server_id: string; public_key: string; listing_id: string; label: string; os: AccountOs | null; country: string | null; city: string | null } | null;
+}
 
 interface Mail { seq: number; record: AccountRecord; at: number }
 
@@ -214,6 +230,11 @@ export class FakeAccountService {
   listProofRequired = true;
   /** POST /v1/pcs/challenge's challenges, by id: for one sign-in (family), spent by their first use */
   private readonly pcAddChallenges = new Map<string, { family: string; challenge: string; expires: number }>();
+  /** PC invites (POST /v1/pc-invites and the routes beside it). Off: the feature is off for every account (404 `not_found`). */
+  pcInvites = true;
+  private readonly invites = new Map<string, FakeInvite>();
+  /** box(server_id, account): the listing a plain invite made, whose card offers Add until `until` (409 `listing_expired` after) */
+  private readonly inviteCards = new Map<string, { until: number; listing: string }>();
   private seq = 0;
   readonly requests: string[] = [];
 
@@ -569,6 +590,7 @@ export class FakeAccountService {
       if (url.pathname.startsWith("/v1/pc/")) return await this.pc(request, url.pathname);
       const leaving = /^\/v1\/pcs\/([0-9a-f]{32})\/leave$/.exec(url.pathname)?.[1];
       if (leaving !== undefined && request.method === "POST") return await this.leave(request, leaving);
+      if (url.pathname === "/v1/pc-invites/redeem" && request.method === "POST") return await this.redeem(request);
       const provider = /^\/v1\/signin\/([a-z]+)$/.exec(url.pathname)?.[1];
       if (provider !== undefined && request.method === "GET") return this.signIn(url, provider);
       if (url.pathname === "/v1/token" && request.method === "POST") return await this.token(request);
@@ -683,6 +705,7 @@ export class FakeAccountService {
       for (const held of [...this.tokens.values()]) if (held.account === account && held.provider === removed) this.revokeFamily(held.family);
       return new Response(null, { status: 204 });
     }
+    if (path === "/v1/pc-invites" || path.startsWith("/v1/pc-invites/")) return await this.inviteRoute(request, path, session, recent);
     const directory = this.directories.get(account) ?? new Map<string, FakePc>();
     this.directories.set(account, directory);
     if (path === "/v1/session" && request.method === "GET") {
@@ -740,6 +763,7 @@ export class FakeAccountService {
       if (this.admitAsksTwoStep && exempt && !retry && this.everUsed(account, admitted, session.family, "admit")) return problem(403, "two_step_required", "Set up two-step sign-in first");
       if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
       if (this.askingExpired(entry)) return problem(409, "listing_expired", "This PC asked to join more than ten minutes ago; start adding it again on the PC");
+      if (this.cardExpired(admitted, account, entry)) return problem(409, "listing_expired", "This PC's card ran out; a new invite opens it again");
       if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
         return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
       }
@@ -918,6 +942,133 @@ export class FakeAccountService {
     return { server_id: challenge.server_id };
   }
 
+  /** A plain invite's listing that nobody admitted within its card's ten minutes: Add is no longer offered for it. */
+  private cardExpired(serverId: string, account: string, entry: FakePc): boolean {
+    const card = this.inviteCards.get(box(serverId, account));
+    return card !== undefined && entry.listing_id === card.listing && entry.new_until == null && this.now() > card.until;
+  }
+
+  /**
+   * POST, GET /v1/pc-invites and DELETE /v1/pc-invites/{id}: an own sign-in's. The fake holds no key-proof challenges
+   * (POST /v1/pcs/challenge), so a stale sign-in makes no invite here, `key_proof` or not.
+   */
+  private async inviteRoute(request: Request, path: string, session: Session, recent: boolean): Promise<Response> {
+    const account = session.account;
+    if (!this.pcInvites) return problem(404, "not_found", "Unknown request");
+    if (this.deviceFamilies.has(session.family)) return problem(403, "own_sign_in_required", "Sign in in the app itself");
+    const now = this.now();
+    const open = (invite: FakeInvite) => invite.used === null && !invite.revoked && !this.revokedFamilies.has(invite.family) && now - invite.madeAt < PC_INVITE_TTL_MS;
+    if (path === "/v1/pc-invites" && request.method === "POST") {
+      let body: unknown;
+      try { body = JSON.parse(await request.text()); } catch { return problem(400, "invalid_request", "Send a JSON object"); }
+      const made = body as { invite_key?: unknown; auto?: unknown; key_proof?: unknown };
+      if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some((name) => !["invite_key", "auto", "key_proof"].includes(name))
+        || (made.auto !== undefined && typeof made.auto !== "boolean")
+        || typeof made.invite_key !== "string" || !isListKeyEncoding(made.invite_key) || !isListPoint(made.invite_key)) return problem(400, "invalid_request", "Send the invite's public key, and auto and key_proof only");
+      if ((body as { key_proof?: unknown }).key_proof !== undefined) return problem(400, "challenge_invalid", "Ask for a new challenge and answer it");
+      if (!recent) return problem(403, "session_not_fresh", "Sign in again on this device first");
+      if (!this.withinRateLimit(`invites:${account}`, INVITES_PER_WINDOW)) return limited("rate_limited", 60);
+      if ([...this.invites.values()].filter((invite) => invite.account === account && open(invite)).length >= INVITES_OPEN_MAX) return problem(409, "invites_full", "Revoke an open invite first");
+      // an auto invite would be refused at its redeem: it is refused here, while the person who makes it is there to read why
+      const times = (this.admitTimes.get(account) ?? []).filter((at) => now - at < PC_NEW_MS);
+      if (made.auto === true && times.length >= PC_ADMITS_PER_DAY) return limited("pc_add_cap", Math.ceil((times[0]! + PC_NEW_MS - now) / 1000));
+      // a key is an invite once, of any account, open or not
+      if ([...this.invites.values()].some((invite) => invite.key === made.invite_key)) return problem(409, "invite_key_used", "Make a new key for a new invite");
+      const invite: FakeInvite = { id: randomHex(16), account, key: made.invite_key, auto: made.auto === true, family: session.family, madeAt: now, revoked: false, used: null };
+      this.invites.set(invite.id, invite);
+      return json({ id: invite.id, account, expires_at: new Date(now + PC_INVITE_TTL_MS).toISOString(), auto: invite.auto });
+    }
+    if (path === "/v1/pc-invites" && request.method === "GET") {
+      const maker = (family: string) => {
+        const key = [...this.keyFamily].find(([, of]) => of === family)?.[0];
+        const device = key === undefined ? undefined : this.registries.get(account)?.devices.get(key);
+        return { device_no: device?.no ?? null, device_label: device?.label ?? null };
+      };
+      return json({ invites: [...this.invites.values()].filter((invite) => invite.account === account && (open(invite) || (invite.used !== null && now - invite.used.at < INVITE_USED_SHOWN_MS)))
+        .map((invite) => ({
+          id: invite.id, made_at: new Date(invite.madeAt).toISOString(), expires_at: new Date(invite.madeAt + PC_INVITE_TTL_MS).toISOString(), auto: invite.auto,
+          ...maker(invite.family), yours: invite.family === session.family, used_at: invite.used === null ? null : new Date(invite.used.at).toISOString(),
+          used_by: invite.used === null ? null : { server_id: invite.used.server_id, listing_id: invite.used.listing_id, label: invite.used.label, os: invite.used.os, country: invite.used.country, city: invite.used.city },
+        })) });
+    }
+    const id = /^\/v1\/pc-invites\/([0-9a-f]{32})$/.exec(path)?.[1];
+    if (id !== undefined && request.method === "DELETE") {
+      const invite = this.invites.get(id);
+      if (invite === undefined || invite.account !== account) return problem(404, "not_found", "No such invite");
+      if (invite.used !== null) return problem(409, "invite_used", "A PC used this invite; remove that PC instead");
+      invite.revoked = true;
+      return new Response(null, { status: 204 });
+    }
+    return problem(404, "not_found", "Unknown request");
+  }
+
+  /**
+   * POST /v1/pc-invites/redeem: a PC, with no sign-in, lists itself in the invite's account on its own key's proof. One
+   * body for every dead or malformed invite. A plain invite's listing waits for Add on its card for ten minutes; an auto
+   * invite's is admitted at once, within the account's daily one-press cap. The same PC and key asking again while its
+   * listing is current get the same answer.
+   */
+  private async redeem(request: Request): Promise<Response> {
+    if (!this.pcInvites) return problem(404, "not_found", "Unknown request");
+    let body: Record<string, unknown>;
+    try { body = JSON.parse(await request.text()) as Record<string, unknown>; } catch { return problem(400, "invalid_request", "Send a JSON object"); }
+    const strings = ["invite_key", "invite_signature", "server_id", "public_key", "relay", "label", "challenge_id", "proof"];
+    if (typeof body !== "object" || body === null || Array.isArray(body) || Object.keys(body).some((name) => name !== "os" && !strings.includes(name))
+      || strings.some((name) => typeof body[name] !== "string") || (body.os !== undefined && accountOsOf(body.os) === null) || !/^[0-9a-f]{32}$/.test(body.server_id as string)) {
+      return problem(400, "invalid_request", "Send the invite's key and signature, this PC's listing and its proof");
+    }
+    const serverId = body.server_id as string;
+    const publicKey = body.public_key as string;
+    const label = body.label as string;
+    if (!this.withinRateLimit(`redeems:${serverId}`, REDEEMS_PER_WINDOW)) return limited("rate_limited", 60);
+    const key = proofKey(publicKey);
+    if (!key || deriveServerId(key) !== serverId) return problem(400, "server_key_mismatch", "That key does not give that server_id");
+    if (!isWssOrigin(body.relay as string)) return problem(400, "invalid_relay", "Give the relay's wss origin");
+    if (label.length < 1 || label.length > 48 || /\p{Cc}/u.test(label)) return problem(400, "invalid_label", "Name the PC in 1-48 characters");
+    if (!this.takeProof({ server_id: serverId, challenge_id: body.challenge_id, proof: body.proof })) return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
+    const dead = problem(400, "invite_invalid", "This invite does not work");
+    const invite = [...this.invites.values()].find((held) => held.key === body.invite_key);
+    if (invite === undefined || invite.revoked || this.now() - invite.madeAt >= PC_INVITE_TTL_MS || this.deletedAccounts.has(invite.account)) return dead;
+    // an invite lives with the sign-in that made it: once that ends, an unused one redeems nothing (a used one still answers its PC)
+    const makerGone = this.revokedFamilies.has(invite.family);
+    if (invite.used === null && makerGone) return dead;
+    // held by whoever holds the line: its private key signed for this account, this PC and this challenge (the account from the row, never the request)
+    if (!await verifyInviteRedeem({ account: invite.account, server_id: serverId, public_key: publicKey, challenge_id: body.challenge_id as string }, body.invite_signature, invite.key)) return dead;
+    const account = invite.account;
+    const directory = this.directories.get(account) ?? new Map<string, FakePc>();
+    this.directories.set(account, directory);
+    const before = directory.get(serverId);
+    if (invite.used !== null) {
+      const same = invite.used.server_id === serverId && invite.used.public_key === publicKey && before?.listing_id === invite.used.listing_id;
+      return same ? json(redeemed(account, invite.used.listing_id, invite.auto, invite.used.at, makerGone)) : dead;
+    }
+    if (before === undefined && directory.size >= DIRECTORY_MAX) return problem(409, "directory_full", "Remove a PC first");
+    const times = (this.admitTimes.get(account) ?? []).filter((at) => this.now() - at < PC_NEW_MS);
+    // the invite stays open: the cap is the account's, not the invite's
+    if (invite.auto && times.length >= PC_ADMITS_PER_DAY) return limited("pc_add_cap", Math.ceil((times[0]! + PC_NEW_MS - this.now()) / 1000));
+    const at = this.now();
+    const listing = randomHex(16);
+    const entry: FakePc = { server_id: serverId, label, public_key: publicKey, relay: body.relay as string, added_at: new Date(at).toISOString(), last_seen_at: before?.last_seen_at ?? null,
+      listed_by_device: !invite.auto, pending_under_step2: this.opensAll && !invite.auto, listed_by_session: invite.family, listing_id: listing, completed_at: null };
+    const place = box(serverId, account);
+    this.pcAdmissions.delete(place);
+    this.inviteCards.delete(place);
+    if (invite.auto) {
+      this.admitTimes.set(account, [...times, at]);
+      // the maker's session's, as a one-press admit's: it ends with that sign-in (the listing stays confirmed)
+      this.pcAdmissions.set(place, { at, taken: false, family: invite.family, listing });
+      this.usedAccounts.add(account);
+      entry.new_until = new Date(at + PC_NEW_MS).toISOString();
+      entry.admitted_at = new Date(at).toISOString();
+      entry.exempt = false;
+    } else this.inviteCards.set(place, { until: at + ADMISSION_TTL_MS, listing });
+    directory.set(serverId, entry);
+    this.pcLeaves.delete(place);
+    invite.used = { at, server_id: serverId, public_key: publicKey, listing_id: listing, label, os: accountOsOf(body.os), ...this.requestPlace };
+    this.ring(account, "");
+    return json(redeemed(account, listing, invite.auto, at));
+  }
+
   /**
    * The PC leaves an account by its own proof, with no bearer (`ovis logout`, account#65): as a DELETE /v1/pcs does, the
    * listing and its untaken admission end; its mailbox and admissions for the account go; and for PC_LEFT_MS a PUT
@@ -987,7 +1138,11 @@ export class FakeAccountService {
         const open = this.pcAdmissions.get(box(challenge.server_id, body.account));
         const entry = this.directories.get(body.account)?.get(challenge.server_id);
         // retry-safe for 10 minutes, inclusive; it ends with the sign-in that made it
-        if (open === undefined || this.now() - open.at > ADMISSION_TTL_MS || this.revokedFamilies.has(open.family) || entry?.new_until == null) return problem(404, "no_admission", "No account added this PC in one press");
+        if (open === undefined || this.now() - open.at > ADMISSION_TTL_MS || this.revokedFamilies.has(open.family) || entry?.new_until == null) {
+          return entry !== undefined && this.cardExpired(challenge.server_id, body.account, entry)
+            ? problem(409, "listing_expired", "This PC's card ran out; a new invite opens it again")
+            : problem(404, "no_admission", "No account added this PC in one press");
+        }
         open.taken = true;
         return json({ account: body.account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until,
           ...(this.completions && body.with_listing_id === true ? { listing_id: entry.listing_id ?? null } : {}) });
@@ -1137,6 +1292,22 @@ function keyProofOf(value: unknown): { challenge_id: string; signature: string }
   const { challenge_id, signature } = value as Record<string, unknown>;
   return typeof challenge_id === "string" && /^[0-9a-f]{32}$/.test(challenge_id) && typeof signature === "string" && /^[A-Za-z0-9_-]{86}$/.test(signature)
     ? { challenge_id, signature } : null;
+}
+
+/**
+ * A redeem's answer, the same for every rerun: the card that offers Add for a plain invite's PC lasts until
+ * `card_until`, and an auto invite's admission waits to be taken until `admission_until`; the other is null, and so is
+ * `admission_until` once the sign-in that made the invite ended (`makerGone`), which ended its admission.
+ */
+function redeemed(account: string, listing: string, auto: boolean, at: number, makerGone = false) {
+  const until = new Date(at + ADMISSION_TTL_MS).toISOString();
+  return { account, listing_id: listing, auto, card_until: auto ? null : until, admission_until: auto && !makerGone ? until : null };
+}
+
+function limited(code: "rate_limited" | "pc_add_cap", seconds: number): Response {
+  const answer = problem(429, code, code === "pc_add_cap" ? "This account added enough PCs today" : "Too many requests; try again later");
+  answer.headers.set("retry-after", String(seconds));
+  return answer;
 }
 
 function randomHex(bytes: number): string {

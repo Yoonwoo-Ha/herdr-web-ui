@@ -659,6 +659,25 @@ describe("ovis link, on the PC itself", () => {
     expect(text).toContain("https://www.google.com/device");
   });
 
+  it("with --account naming another account than the one this PC is in, fails and names the way out, never switching it", async () => {
+    const account = "acct_0123456789abcdef";
+    const local = localPc((_request, path) => path === "/api/account/status" ? Response.json({ account, unlinked: [], removals: [], adds: [], blocked: [] }) : undefined);
+    const run = async (args: string[]) => {
+      const out: string[] = [];
+      const code = await link(args, { origin: ORIGIN, headers: {}, fetch: local.fetch, out: (text) => out.push(text), signal: new AbortController().signal, lines: answers(), accountService: SERVICE, terminal: false, isTty: false });
+      return { code, text: out.join("") };
+    };
+    for (const other of ["acct_2", "acct_0123456789abcdeX", "acct_0123456789ab_"]) {
+      const refused = await run(["--account", other]);
+      expect([other, refused.code]).toEqual([other, 1]);
+      // the short form, as ovis status shows it, never the whole id
+      expect(refused.text).toBe("This PC is in another Ovis account (acct_0123456). Run ovis logout to take it out of that one first, then run ovis add again.\n");
+    }
+    // the account it is in, by all of its id or its start as ovis status shows it: done, as before
+    for (const same of [account, account.slice(0, 12)]) expect(await run(["--account", same])).toEqual({ code: 0, text: "This PC is already in an Ovis account (acct_0123456).\n" });
+    expect(local.calls.map((call) => call.path).every((path) => path === "/api/account/status")).toBe(true);
+  });
+
   it("does not sign in when this PC is already in an account, or when the account service is off", async () => {
     let account: string | null = "acct_1";
     const local = localPc((_request, path) => path === "/api/account/status" ? Response.json({ account, unlinked: [], removals: [], adds: [], blocked: [] }) : undefined);

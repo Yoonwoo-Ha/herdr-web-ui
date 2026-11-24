@@ -6,7 +6,7 @@
 import type { AccountAddRelay } from "../../shared/machines.ts";
 import type { DeviceStore } from "../devices.ts";
 import type { RelayService } from "../relay/service.ts";
-import type { AccountMailbox } from "./mailbox.ts";
+import { AccountServiceRefusal, type AccountMailbox } from "./mailbox.ts";
 
 export interface PressServices {
   readonly devices: DeviceStore;
@@ -39,7 +39,11 @@ export async function pressOnce(services: PressServices, account: string): Promi
   const identity = relay.currentIdentity()?.server_id ?? null;
   let admitted: Awaited<ReturnType<AccountMailbox["admission"]>>;
   try { admitted = await accountMailbox.admission(account); }
-  catch (error) { return refuse("account_unavailable", error instanceof Error ? error.message : String(error), 503); }
+  catch (error) {
+    // a listing an invite made is offered Add for ten minutes: asking again past them waits for nothing
+    if (error instanceof AccountServiceRefusal && error.code === "listing_expired") return refuse("listing_expired", "Your devices no longer offer Add for this PC: its card ran out 10 minutes after it was listed", 409);
+    return refuse("account_unavailable", error instanceof Error ? error.message : String(error), 503);
+  }
   if (admitted === null) return refuse("no_admission", "The account service did not admit this PC in one press", 404);
   // the service's word counts only for the account named here (G1)
   if (admitted.account !== account) return refuse("account_mismatch", "The account service answered for another account", 502);
@@ -60,6 +64,28 @@ export async function pressOnce(services: PressServices, account: string): Promi
   await accountMailbox.complete(account, listing);
   if (devices.serviceBinding() !== binding) return refuse("not_listed", "The account removed this PC while it was being added", 409);
   return { account };
+}
+
+/** How long after a one-press ask that found no admission yet this PC counts as waiting for an Add. */
+export const WAITING_FOR_ADD_MS = 30_000;
+
+/** When this PC's own window or CLI last asked for its one-press admission and was told to wait, by its device store. */
+const lastWaits = new WeakMap<DeviceStore, number>();
+
+/**
+ * Notes what a one-press ask from this PC's window or CLI (`ovis add`, `ovis join`) got: no admission yet, or the
+ * account service not answering, means it is still waiting for Add on a device of the account (they ask every 6 to 15
+ * seconds); anything else ends that.
+ */
+export function notePressAsk(devices: DeviceStore, outcome: PressOutcome, now = Date.now()): void {
+  if ("refused" in outcome && (outcome.refused.code === "no_admission" || outcome.refused.code === "account_unavailable")) lastWaits.set(devices, now);
+  else lastWaits.delete(devices);
+}
+
+/** Whether something on this PC is waiting for Add on a device of its account right now (GET /api/account/status). */
+export function waitingForAdd(devices: DeviceStore, now = Date.now()): boolean {
+  const at = lastWaits.get(devices);
+  return at !== undefined && now - at < WAITING_FOR_ADD_MS && devices.account() === null;
 }
 
 /**

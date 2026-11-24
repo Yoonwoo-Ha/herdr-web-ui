@@ -540,6 +540,11 @@ With `?fresh=1` the PC first pulls its mailbox (a pull that starts after the req
 waiting there is counted, and adds `fresh`: true only when that pull read the whole mailbox
 without an error, for the PC's current account and relay identity. A PC whose account service is
 turned off (`off`) has no mailbox and answers `fresh: true`; one whose address is unusable does not.
+`waiting_for_add` is true while this PC's own window or CLI (`ovis add`, `ovis join`) asked for its
+one-press admission (`POST /api/account/one-press`) in the last 30 seconds and the service had none
+yet, or did not answer, and the PC is in no account: something here waits for **Add** on a device of
+the account. It is a yes or no only, never the account asked for. It lives in memory, so a restart
+ends it until the next ask.
 A device that waits to link reads one body, whatever the PC holds: `account` `null`, `members` 0,
 `unlinked` its own id alone, every other list empty, `enrolling` and `blocked_all` false. No
 mailbox is read for it, and `fresh` is ignored.
@@ -551,7 +556,9 @@ after a minute. Only this PC's own window or CLI gets one (403 `owner_only` othe
 `one-press`); 503 `account_unavailable` when the service gave no challenge. The way back into an
 account after `ovis logout` is so a sign-in on the PC itself.
 
-`POST /api/account/relay-account` `{ "account" }`: the account this PC asks its relay pass under while it
+`POST /api/account/relay-account` `{ "account" }` (or `{ "account": null }`, over a direct connection
+only and only on a PC in no account (409 `in_account` otherwise), which forgets the one named: `ovis
+join` puts back what it found): the account this PC asks its relay pass under while it
 has no members ([relay.md](relay.md#relay-pass)): over a direct connection with drive access (the PC's own
 screen, after it listed the PC), or through the relay only from a drive account member of that same
 account (`account_required` otherwise). Kept in `relay/account.json`; a
@@ -1677,6 +1684,40 @@ The `account` role keeps the two proofs apart: the relay verifies `control` and 
 answer the PC gave the account service is no use to the relay, and a relay's challenge passed on by
 the account service gets an answer the relay refuses.
 
+### PC invites
+
+A device signed in to the account can make an **invite** for a new PC, which joins with `ovis join`
+([relay.md](relay.md#a-pc-with-no-screen)) and no sign-in of its own. An invite is a key: the device
+makes a P-256 key pair, gives the account service the public key alone (`invite_key`), and shows the
+signed list's join line, which carries the private key (`shared/account-list-join.ts`:
+`ovis-join:1:` and the base64url of `{"v":1,"service","account","list","secret"}`; `list` is empty
+while the account has no signed member list). The service never holds anything that redeems an
+invite. It works once, for 15 minutes, and an account holds at most five open. Whoever gets the line
+can list a PC in the account for its devices to add, so a client acts only on a line whose `service`
+is its own account service, shows the account and gets a typed yes (or a matching `--account`)
+before it redeems it. The PC proves it holds the line by signing, with its private key,
+`ovis-invite-redeem/1` and then the account, its `server_id`, its relay key and the id of the
+challenge its own proof answers in the same request, each length-prefixed
+(`shared/account-list-invite.ts` `signInviteRedeem`): a captured signature redeems nothing else.
+
+| request | body | answer |
+|---|---|---|
+| `POST /v1/pc-invites` | `{ "invite_key", "auto"?, "key_proof"? }` | `{ "id", "account", "expires_at", "auto" }`: an own sign-in's; the device shows its line only after this answer, and only for its own account. A key is an invite once (409 `invite_key_used`). An auto invite is refused here with 429 `pc_add_cap` (and `retry-after`) while the account's daily one-press adds are used up. `auto` makes an invite whose PC is admitted at once, with no Add. `key_proof` (`{ "challenge_id", "signature" }`, from `POST /v1/pcs/challenge`, signed with this sign-in's device key) is needed only for a sign-in older than 10 minutes. 403 `own_sign_in_required`, 403 `session_not_fresh`, 400 `challenge_invalid`, 403 `frozen`, 409 `invites_full`, 429 `rate_limited`, 404 `not_found` (invites are off for the account), 400 `invalid_request` |
+| `POST /v1/pc-invites/redeem` | `{ "invite_key", "invite_signature", "server_id", "public_key", "relay", "label", "os"?, "challenge_id", "proof" }` | `{ "account", "listing_id", "auto", "card_until", "admission_until" }`: no bearer; `card_until` is when a plain invite's card stops offering Add, `admission_until` when an auto invite's admission stops waiting (ISO, the other null), the same for every rerun; the PC's proof answers a `POST /v1/pc/challenge` (`role` `account`, `connection_id` the challenge id, as for its mailbox), and `invite_signature` is checked against the invite's row (its account, never one the request names). One 400 `invite_invalid` for every dead, unknown or malformed invite and every signature that does not verify; a request that carries anything else (an `invite` line) is 400 `invalid_request`. Also 400 `invalid_request`, `server_key_mismatch`, `invalid_relay`, `invalid_label`, 401 `proof_invalid`, 409 `list_endpoint`, `directory_full`, `try_again`, 429 `pc_add_cap` (auto only, with `retry-after`; the invite stays open), 429 `rate_limited`, 404 `not_found`. The same PC and key asking again within the 15 minutes, while its listing is current, get the same answer |
+| `GET /v1/pc-invites` | | `{ "invites": [{ "id", "made_at", "expires_at", "auto", "device_no", "device_label", "yours", "used_at", "used_by": null \| { "server_id", "listing_id", "label", "os", "country", "city" } }] }`: open invites, and used ones for a day after their use. No line or key |
+| `DELETE /v1/pc-invites/{id}` | | 204, also for one revoked or expired; 409 `invite_used` once a PC used it (remove that PC instead); 404 `not_found` |
+
+After a plain invite's redeem, the PC's card (**Add this PC to your account?**) offers Add for 10
+minutes, and the PC asks `POST /v1/pc/admission` for it as after `ovis add`: 404 `no_admission`
+until a device presses Add, 409 `listing_expired` after the 10 minutes (the PC answers its own
+one-press ask with `listing_expired` then, and `ovis join` stops waiting); a new invite opens the
+card again. An auto invite's admission is there at once, for 10 minutes. An invite lives with the
+sign-in that made it: once that ends (a sign-out, a removed device or method, the account deleted),
+an unused invite redeems nothing (`invite_invalid`), and an auto admission not yet taken ends too
+(`no_admission`; the listing stays confirmed, and a rerun answers it with `admission_until` null). A
+PC that gives up leaves by its own proof (`POST /v1/pcs/{server_id}/leave`), which answers 204
+whether or not it was listed.
+
 ### Who is asking
 
 A device code can be phished: someone starts a sign-in on their own device and talks a person into
@@ -1730,6 +1771,7 @@ Seoul, South Korea", leaving out what is unknown ([Adding a PC](#adding-a-pc), "
 | `enrolling` | — | the PC waits for its first member's enrollment; an add waits too (a record outcome) |
 | `removal_pending` | — | the key is held: a waiting remove or an enrollment named it, or the waiting queue cannot be trusted (a record outcome) |
 | `in_account` | 409 | `POST /api/relay/offer` with `x-ovis-no-account-only`: this PC is in an account, so it makes no QR code that would put it in one |
+| `listing_expired` | 409 | `POST /api/account/one-press`: the listing a plain invite made is past its card's 10 minutes, so no Add can come for it; a new invite opens it again |
 | `no_account_named` | 409 | `POST /api/relay/offer` with `x-ovis-no-account-only`: no account was named for this PC (`relay-account`), so it makes no QR code yet |
 
 ## What this does not protect against

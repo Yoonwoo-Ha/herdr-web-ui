@@ -1135,6 +1135,32 @@ function desktopBrowser(args: readonly string[]): ((url: string) => boolean) | n
   };
 }
 
+/**
+ * Ctrl+C, a supervisor's SIGTERM or the terminal closing (SIGHUP) stop a run that has something to undo on the way out
+ * (`link` takes its code back and removes a device the code let in that nobody kept; `join` takes a listing nobody
+ * added off the account's list). A signal can come twice (to the process group, and passed on by a checkout's link),
+ * so every one is caught, and the clean-up gets ten seconds before the process ends anyway. An output that went away
+ * (the terminal closed, a pipe's reader ended) fails the next write. A failed write nobody hears ends the process where
+ * it stands, or leaves it running with nobody to read it: it is heard instead, and stops the run as its signal would.
+ */
+function stopOnSignals(): AbortSignal {
+  const stop = new AbortController();
+  const halt = (): void => {
+    if (stop.signal.aborted) return;
+    stop.abort();
+    setTimeout(() => process.exit(1), 10_000).unref();
+  };
+  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, halt);
+  process.stdout.on("error", halt);
+  return stop.signal;
+}
+
+/** A machine profile's owner calls go to its socket, the door health() passed on (serverDoor), with the origin it takes there. */
+function ownerCalls(): { readonly origin: string; readonly fetch?: (input: string | URL | Request, init?: RequestInit) => Promise<Response> } {
+  const door = serverDoor();
+  return door === null ? { origin } : { origin: "http://localhost", fetch: (input, init) => ownerFetch(door, input, init) };
+}
+
 async function linkCommand(args: readonly string[]): Promise<number> {
   const active = activePluginScript(ROOT, port, APP_STATE_DIR);
   // Always "link", whichever name it was run by: a release from before `add` and `login` knows only that one
@@ -1143,27 +1169,11 @@ async function linkCommand(args: readonly string[]): Promise<number> {
   if (!(await health())) return notRunning();
   const headers: Record<string, string> = {};
   if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
-  const stop = new AbortController();
-  // Ctrl+C, a supervisor's SIGTERM or the terminal closing (SIGHUP): each takes the code back on the way out, and
-  // removes a device the code let in that nobody kept. A signal can come twice (to the process group, and passed on
-  // by a checkout's link), so every one is caught, and the clean-up gets ten seconds before the process ends anyway
-  const halt = (): void => {
-    if (stop.signal.aborted) return;
-    stop.abort();
-    setTimeout(() => process.exit(1), 10_000).unref();
-  };
-  for (const signal of ["SIGINT", "SIGTERM", "SIGHUP"] as const) process.on(signal, halt);
-  // An output that went away (the terminal closed, a pipe's reader ended) fails the next write. A failed write nobody
-  // hears ends the process where it stands, or leaves it running with nobody to read it: the code stays valid either
-  // way. It is heard instead, and stops the run as its signal would
-  process.stdout.on("error", halt);
-  // a machine profile's owner calls go to its socket, the door health() passed on (serverDoor), with the origin it takes there
-  const door = serverDoor();
+  const signal = stopOnSignals();
   const openBrowser = desktopBrowser(args);
   return linkPc(args, {
     ...(openBrowser === null ? {} : { openBrowser }),
-    origin: door === null ? origin : "http://localhost", headers, signal: stop.signal,
-    ...(door === null ? {} : { fetch: (input: string | URL | Request, init?: RequestInit) => ownerFetch(door, input, init) }),
+    ...ownerCalls(), headers, signal,
     accountService: accountServiceOrigin(env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE),
     ...linkSettings(env),
     out: (text) => process.stdout.write(text),
@@ -1174,6 +1184,45 @@ async function linkCommand(args: readonly string[]): Promise<number> {
     // the QR code that adds this PC is a key to it: drawn on a terminal only, unless --print asks for it anyway
     isTty: process.stdout.isTTY === true,
     size: () => process.stdout.isTTY === true ? { rows: process.stdout.rows, columns: process.stdout.columns } : null,
+  });
+}
+
+/** `ovis join` (scripts/plugin-join.ts): this PC joins an account with an invite, through the same add as `ovis add`. */
+async function joinCommand(args: readonly string[]): Promise<number> {
+  const [{ absoluteInviteFile, join: joinPc, INVITE_READ_MAX, readInviteFile }, { discardTyped, linkSettings }] = await Promise.all([import("./plugin-join.ts"), import("./plugin-link.ts")]);
+  const active = activePluginScript(ROOT, port, APP_STATE_DIR);
+  // the release runs in its own folder: a relative invite file is named from here
+  if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) return await handOn(active, ["join", ...absoluteInviteFile(args, process.cwd())]);
+  // Ctrl+C ends the run from here on, while the invite is read too (handOn passes signals on to a release instead)
+  const signal = stopOnSignals();
+  const running = await health();
+  const headers: Record<string, string> = {};
+  if ((env["OVIS_TOKEN"] ?? "") !== "") headers["authorization"] = `Bearer ${env["OVIS_TOKEN"]}`;
+  const json = args.includes("--json");
+  return joinPc(args, {
+    ...ownerCalls(), headers, signal, running,
+    accountService: accountServiceOrigin(env["OVIS_ACCOUNT_SERVICE_URL"] ?? DEFAULT_ACCOUNT_SERVICE),
+    ...linkSettings(env),
+    out: (text) => process.stdout.write(text),
+    err: (text) => process.stderr.write(text),
+    lines: console[Symbol.asyncIterator](),
+    terminal: process.stdin.isTTY === true,
+    discard: discardTyped,
+    // what a person reads goes to stderr with --json: that is where the question is asked
+    isTty: (json ? process.stderr : process.stdout).isTTY === true,
+    // the caller's own environment only: an invite belongs in no settings file
+    ...process.env["OVIS_INVITE"] === undefined ? {} : { inviteEnv: process.env["OVIS_INVITE"] },
+    readFile: readInviteFile,
+    readStdin: async () => {
+      const chunks: Uint8Array[] = [];
+      let size = 0;
+      for await (const chunk of Bun.stdin.stream()) {
+        chunks.push(chunk);
+        size += chunk.length;
+        if (size > INVITE_READ_MAX) break;
+      }
+      return Buffer.concat(chunks).toString("utf8");
+    },
   });
 }
 
@@ -1319,18 +1368,49 @@ const deviceLine = (title: string, devices: readonly ShownDevice[]): string => {
 };
 
 /** This PC's account as `GET /api/account/status` tells its owner; null where that does not answer. */
-async function accountOf(): Promise<{ readonly account: string | null; readonly members: number } | null> {
+async function accountOf(): Promise<{ readonly account: string | null; readonly members: number; readonly waiting: boolean | null } | null> {
   try {
     const response = await serverFetch("/api/account/status", { signal: AbortSignal.timeout(1500) });
     if (!response.ok) return null;
-    const body = await response.json() as { account?: unknown; members?: unknown };
+    const body = await response.json() as { account?: unknown; members?: unknown; waiting_for_add?: unknown };
     if (!(typeof body.account === "string" || body.account === null) || !Number.isSafeInteger(body.members)) return null;
-    return { account: body.account, members: body.members as number };
+    // null from a server from before the field
+    return { account: body.account, members: body.members as number, waiting: typeof body.waiting_for_add === "boolean" ? body.waiting_for_add : null };
   } catch { return null; }
 }
 
+/**
+ * `ovis status --json`: what an agent reads to know where this PC stands, as one JSON object. No token, key or e-mail
+ * address is in it. The account, and whether something waits for Add, are told only to the app's owner, as `status`
+ * names the account only to it (`account_known`); the server ID only to this PC's own window and CLI.
+ */
+async function statusJson(): Promise<number> {
+  const answer = await appHealth();
+  const account = answer?.devices == null ? null : await accountOf();
+  let serverId: string | null = null;
+  if (answer !== null) {
+    try {
+      const response = await serverFetch("/api/relay", { signal: AbortSignal.timeout(1500) });
+      const body = response.ok ? await response.json() as { server_id?: unknown } : null;
+      if (typeof body?.server_id === "string" && /^[0-9a-f]{32}$/.test(body.server_id)) serverId = body.server_id;
+    } catch {}
+  }
+  const phase = answer?.relay ?? null;
+  process.stdout.write(`${JSON.stringify({
+    version: runningVersion() ?? builtVersion,
+    running: answer !== null,
+    server_id: serverId,
+    relay: phase === null ? null : { on: phase !== "off", connected: phase === "online", phase },
+    account: account?.account ?? null,
+    account_known: account !== null,
+    waiting_for_add: account?.waiting ?? null,
+  })}\n`);
+  return 0;
+}
+
 /** Reporting "down" is not an action failure: herdr logs a nonzero exit as failed. */
-async function status(): Promise<number> {
+async function status(args: readonly string[] = []): Promise<number> {
+  if (args.includes("--json")) return await statusJson();
   const pid = recordedPid();
   const answer = await appHealth();
   process.stdout.write(`${answer !== null ? "running" : "down"} ${origin}${pid === null ? "" : ` (pid ${pid})`}\n`);
@@ -1486,9 +1566,10 @@ export async function runPlugin(): Promise<void> {
   switch (command) {
     case "start": process.exit(await start());
     case "stop": process.exit(await stop());
-    case "status": process.exit(await status());
+    case "status": process.exit(await status(args));
     case "pair": process.exit(await pair(args));
     case "link": process.exit(await linkCommand(args));
+    case "join": process.exit(await joinCommand(args));
     case "logout": process.exit(await logout());
     case "recover": process.exit(await recover(args));
     case "confirm": process.exit(await confirm());

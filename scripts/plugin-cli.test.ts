@@ -20,6 +20,11 @@ describe("the public names", () => {
     [["phone-setup"], "phone-setup", []],
     [["recover", "--lift", "f:abc"], "recover", ["--lift", "f:abc"]],
     [["tui", "--session", "work"], "tui", ["--session", "work"]],
+    [["status", "--json"], "status", ["--json"]],
+    // join reads its own words: the invite may be one of them, or standard input (-)
+    [["join", "--invite-file", "/x", "--json"], "join", ["--invite-file", "/x", "--json"]],
+    [["join", "-", "--account=acct_1"], "join", ["-", "--account=acct_1"]],
+    [["join", "ovis-join:1:eyJ2IjoxfQ"], "join", ["ovis-join:1:eyJ2IjoxfQ"]],
   ] as const)("%j runs %s %j, the names every release speaks", (words, command, args) => {
     expect(parseCommand(words, ON)).toEqual({ kind: "run", command, args });
   });
@@ -38,7 +43,7 @@ describe("help and version", () => {
     expect(parseCommand([word], ON)).toEqual({ kind: "version" });
   });
 
-  it.each(["stop", "start", "pair", "phone", "login", "logout", "recover", "tui"])("%s --help comes before it runs", (word) => {
+  it.each(["stop", "start", "pair", "phone", "login", "join", "logout", "recover", "tui"])("%s --help comes before it runs", (word) => {
     const parsed = parseCommand([word, "--help"], ON);
     expect(parsed.kind).toBe("help");
     expect(parseCommand([word, "-h"], ON)).toEqual(parsed);
@@ -50,7 +55,18 @@ describe("help and version", () => {
     const help = mainHelp(OFF);
     for (const hidden of ["  link ", "phone-setup", "--approve", "--code", "  tui ", "logout", "recover", "confirm"]) expect(help).not.toContain(hidden);
     expect(mainHelp(ON)).toContain("  tui ");
-    expect(mainHelp(ON)).toContain("  login      Add this PC to your Ovis account (also: add)\n");
+    expect(mainHelp(ON)).toContain("  login      Add this PC to your Ovis account (also: add)\n  join       Add this PC to an Ovis account with an invite from a device of it\n");
+    expect(mainHelp(OFF)).toContain("  join ");
+  });
+});
+
+describe("ovis join --help", () => {
+  it("names the file and standard input forms first, why, and every exit code", () => {
+    const parsed = parseCommand(["join", "--help"], ON);
+    const text = parsed.kind === "help" ? parsed.text : "";
+    expect(text.split("\n")[0]).toBe("Usage: ovis join --invite-file <path> | - | <invite> [--account <id>] [--json]");
+    expect(text).toContain("shows in the process list");
+    for (let code = 0; code <= 14; code++) expect(text).toMatch(new RegExp(`(^|[ ,(])${code} [a-zA-Z-]`, "m"));
   });
 });
 

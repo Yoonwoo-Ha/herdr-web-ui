@@ -16,6 +16,7 @@ import { exportPublicKey, generateKeyPair } from "../shared/relay-e2ee.ts";
 import { trustRefusal } from "../server/herdr-core/discovery.ts";
 import { profileGroups } from "../server/herdr-discovery.ts";
 import { decodeOffer, encodeOffer } from "../shared/relay-offer.ts";
+import { newInvite } from "../shared/account-list-join.ts";
 
 const ROOT = join(import.meta.dir, "..");
 let scratch: string;
@@ -833,6 +834,38 @@ describe("the state dir when run by hand", () => {
   });
 });
 
+describe("ovis join, as the command runs it", () => {
+  const env = () => ({ HOST: "127.0.0.1", PORT: "1", OVIS_STATE_DIR: join(scratch, "app-state") });
+
+  it("reads the invite from a file or standard input, checks it before anything else, and answers --json with one object and its exit code", async () => {
+    // a line for the account service the command uses by default
+    const line = (await newInvite("https://account.ovis.sh", "acct_1", null)).line;
+    const payload = line.slice("ovis-join:1:".length);
+    const file = join(scratch, "invite");
+    writeFileSync(file, `${line}\n`, { mode: 0o600 });
+    for (const [args, stdin] of [[["--invite-file", file, "--json"], undefined], [["-", "--json"], ` ${line}\n`]] as const) {
+      const result = await run("join", env(), { args: [...args], ...stdin === undefined ? {} : { stdin } });
+      // the invite's form is good; nothing answers at this PC's port
+      expect([args, result.exitCode]).toEqual([args, 13]);
+      expect(JSON.parse(result.out)).toMatchObject({ ok: false, error: "not_running" });
+      expect(result.err).toContain("Ovis is not running on this PC.");
+      for (const text of [result.out, result.err]) expect(text).not.toContain(payload.slice(-60));
+    }
+    writeFileSync(file, `ovis-invite:1:acct_1:${"Q".repeat(42)}w\n`);
+    const wrong = await run("join", env(), { args: ["--invite-file", file] });
+    expect(wrong.exitCode).toBe(3);
+    expect(wrong.out).toContain("That is not an Ovis invite");
+    // a line for another account service than this PC's
+    writeFileSync(file, `${(await newInvite("https://account.test", "acct_1", null)).line}\n`);
+    const elsewhere = await run("join", env(), { args: ["--invite-file", file, "--json"] });
+    expect([elsewhere.exitCode, (JSON.parse(elsewhere.out) as { error: string }).error]).toEqual([3, "invite_invalid"]);
+    const none = await run("join", env(), { args: [] });
+    expect(none.exitCode).toBe(2);
+    const fromEnv = await run("join", { ...env(), OVIS_INVITE: line }, { args: ["--json"] });
+    expect(fromEnv.exitCode).toBe(13);
+  });
+});
+
 describe("the devices status lists apart", () => {
   const GROUPS = { unlinked: [{ id: "6a1f0c9e2b7d4a10", label: "Old phone" }], own_word: [{ id: "0d4c1b7a9e2f3c58", label: "Tab\u001b]0;let\u0007let" }, { id: "1e5d2c8b0a3f4d69", label: "Laptop" }] };
   /** An Ovis on a port of its own whose health answer is `answer` for each request, by the request's authorization. */
@@ -848,6 +881,34 @@ describe("the devices status lists apart", () => {
     return { server, asked, env: { HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "" } };
   }
   const lines = (out: string) => out.split("\n").filter((line) => /^(relay )?devices /.test(line));
+
+  it("--json is one object an agent reads: version, running, server id, relay, account and whether it waits for Add, with no token or address in it", async () => {
+    const serverId = "0123456789abcdef0123456789abcdef";
+    const server = Bun.serve({ hostname: "127.0.0.1", port: 0, fetch(request) {
+      const path = new URL(request.url).pathname;
+      if (path === "/api/health") return Response.json({ ...APP_HEALTH, account_devices: { unlinked: [], own_word: [] }, relay: { phase: "connecting" } });
+      if (path === "/api/account/status") return Response.json({ account: null, members: 0, waiting_for_add: true });
+      if (path === "/api/relay") return Response.json({ phase: "connecting", blocked: null, server_id: serverId });
+      return new Response(null, { status: 404 });
+    } });
+    writeFileSync(join(configDir, ".env"), `PORT=${server.port}\n`);
+    try {
+      const result = await run("status", { HOST: "127.0.0.1", HERDR_PLUGIN_CONFIG_DIR: configDir, OVIS_STATE_DIR: join(scratch, "app-state"), OVIS_TOKEN: "the-token" }, { args: ["--json"] });
+      expect(result.exitCode, result.err).toBe(0);
+      expect(result.out.split("\n")).toHaveLength(2);
+      const said = JSON.parse(result.out) as Record<string, unknown>;
+      expect({ ...said, version: typeof said["version"] }).toEqual({
+        version: "string", running: true, server_id: serverId, relay: { on: true, connected: false, phase: "connecting" },
+        account: null, account_known: true, waiting_for_add: true,
+      });
+      expect(result.out).not.toContain("the-token");
+    } finally { await server.stop(true); }
+    // nothing answers: down, and nothing else is known
+    const down = await run("status", { HOST: "127.0.0.1", PORT: "1", OVIS_STATE_DIR: join(scratch, "app-state") }, { args: ["--json"] });
+    expect(down.exitCode).toBe(0);
+    const said = JSON.parse(down.out) as Record<string, unknown>;
+    expect({ ...said, version: typeof said["version"] }).toEqual({ version: "string", running: false, server_id: null, relay: null, account: null, account_known: false, waiting_for_add: null });
+  });
 
   it("are the two groups of the owner's health answer, each device by its name with no control character, and its id", async () => {
     const pc = answering(() => ({ ...APP_HEALTH, account_devices: GROUPS }));
