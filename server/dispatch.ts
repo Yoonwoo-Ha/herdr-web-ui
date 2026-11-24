@@ -18,7 +18,7 @@ import { handleSeenRequest, type SeenStore } from "./seen.ts";
 import { openTailscaleApp, remoteAccess, serveTailscale, tailscaleBinary, type TailnetNode } from "./tailscale.ts";
 import { handleTailnetNodeRequest, tailnetNodeGate, type TailnetNodes } from "./tailnet-nodes.ts";
 import { TAILSCALE_CONTROLS } from "./dispatch-routes.ts";
-import { badRequest, errorResponse, jsonResponse, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
+import { badRequest, errorResponse, jsonResponse, readJsonObject, setRequestRoute, wordedHeaders, wordHerdrFailures } from "./http.ts";
 import { requestOrigin, serveStatic } from "./static.ts";
 import { compressResponse } from "./compress.ts";
 import { handleTasksRequest } from "./tasks-routes.ts";
@@ -1060,6 +1060,23 @@ export async function handleRequest(request: Request, ctx: ServerContext): Promi
     return handleSessionResumeRequest(request, { readOnly, stores: { codexHome: options.codexHome, opencodeDb: options.opencodeDb, hermesHome: options.hermesHome }, holdOpen: (seconds) => ctx.timeout(request, seconds) });
   }
 
+  if (acp && (pathname === "/api/pane/turn/cancel" || pathname === "/api/pane/turn/release")) {
+    setRequestRoute(pathname);
+    if (request.method !== "POST") return badRequest("method_not_allowed", "Use POST.");
+    const body = await readJsonObject(request);
+    if (body instanceof Response) return body;
+    if (typeof body.pane_id !== "string") return badRequest("missing_pane_id", "pane_id is required.");
+    const child = acp.forPane(body.pane_id);
+    if (!child?.client.connected || !child.client.session) return badRequest("unavailable", "No connected ACP child.");
+    const cancel = pathname.endsWith("/cancel");
+    if (!cancel && (body.child_id !== child.id || !Number.isSafeInteger(body.generation))) return badRequest("hold_changed", "The child and hold generation are required.");
+    try {
+      if (cancel) return jsonResponse({ ok: true, child_id: child.id, generation: await child.client.hold(child.client.session) });
+      const receipt = await child.client.request("_keeper/release", { sessionId: child.client.session, generation: body.generation });
+      if (!receipt || typeof receipt !== "object" || !("released" in receipt && receipt.released === true)) return badRequest("unavailable", "No keeper receipt.");
+      return jsonResponse({ ok: true, child_id: child.id, ...receipt });
+    } catch { return badRequest("hold_changed", "The keeper could not confirm that operation."); }
+  }
   if (pathname.startsWith("/api/pane/prompt")) {
     try {
       const response = await handlePromptRequest(request, url, { serialize, codexHome: options.codexHome, claudeTranscript: (paneId) => claudeAgents.sessionOf(paneId)?.path ?? null, readOnly, openCodeStateDir: options.openCodeStateDir, openCodeState, approvals, ...(acp ? { acp } : {}), onAnswered: () => options.telemetry?.tally("prompt_answers") });

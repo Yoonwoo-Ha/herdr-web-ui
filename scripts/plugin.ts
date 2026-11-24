@@ -54,6 +54,7 @@ import { descendantProcesses, windowsArgv, windowsProcessTable } from "../server
 // state and config dirs, asks herdr for its config dir, or copies an old install's settings (adoptLegacyConfig). Its
 // --help is no run of it: runPlugin answers that with every other command's.
 const early = parseCommand(process.argv.slice(2), { account: false, tui: true });
+if (early.kind === "run" && early.command === "agent") process.exit(await (await import("./plugin-agent.ts")).runAgent(early.args));
 if (early.kind === "run" && early.command === "tui") process.exit(await runTui(early.args));
 if (import.meta.main || COMPILED) {
   const opened = await runBareTui(process.argv.slice(2));
@@ -1535,6 +1536,7 @@ export async function runPlugin(): Promise<void> {
     process.exit(1);
   }
   switch (command) {
+    case "agent": process.exit(await (await import("./plugin-agent.ts")).runAgent(args));
     case "start": process.exit(await start());
     case "stop": process.exit(await stop());
     case "status": process.exit(await status(args));

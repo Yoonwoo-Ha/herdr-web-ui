@@ -203,6 +203,7 @@ export interface Settings {
   codexLaunchEffort: (typeof CODEX_EFFORTS)[number] | "";
   /** the browser tool each agent this PC's server starts is given (shared/browser-tools.ts); an agent absent gets none */
   agentBrowserTools: BrowserToolChoices;
+  agentHarnessTool: HarnessToolSetting;
 }
 
 export const DIFF_STYLES = ["unified", "split"] as const;
@@ -214,6 +215,7 @@ type TelemetrySourceSettings = Omit<Settings,
   "keyBarExtras" | "keyBarItems" | "keyBarExpanded" | "shortcutOverrides" | "herdrPrefixKeys" | "terminalFontFamily" | "chatFontFamily" | "uiFontFamily"
   | "quickReplies" | "agentLocks" | "lockedAgents" | "opencodeParentEnds" | "ompHeldFiles" | "restoreReplacedServer" | "agentNamedGroups" | "agentGroupNames" | "agentGroupOf" | "usageOrder" | "usageHidden" | "fileOpen" | "filesPanel" | "webLinks" | "reuseExternalLinkTab" | "builtInBrowser" | "browserBlockedSites" | "claudeLaunchMode" | "codexLaunchMode"
   | "claudeLaunchModel" | "claudeLaunchEffort" | "codexLaunchModel" | "codexLaunchEffort" | "agentBrowserTools"
+  | "agentHarnessTool"
   | "followHerdrFocus" | "sidebarPeek" | "phoneInbox" | "sidebarBackgroundWorkspaces" | "codexDrag" | "composerArtifacts" | "composerPasteSend" | "composerBtw" | "terminalMirrorWrap" | "sidebarFilter" | "sidebarContext" | "sidebarAgentTree" | "foldHelpers" | "pcLoad"
   | "expandThinking" | "foldWork" | "customThemes" | "autoTabNames" | "voiceEngine" | "agentGroups" | "agentGroupSort" | "terminalImages" | "terminalAttachButton"
   | "terminalKeyboardOnRequest" | "terminalFoldKeyBar" | "fileFontSize" | "fileFontBase" | "editTextFiles" | "reopenFileOnReturn" | "phoneTabs">;
@@ -318,6 +320,7 @@ export const SETTING_SCOPE = {
   claudeLaunchMode: "shared", codexLaunchMode: "shared",
   claudeLaunchModel: "shared", claudeLaunchEffort: "shared", codexLaunchModel: "shared", codexLaunchEffort: "shared",
   agentBrowserTools: "shared",
+  agentHarnessTool: "shared",
   customThemes: "shared",
 } as const satisfies Record<keyof Settings, "shared" | "device">;
 
@@ -428,6 +431,7 @@ export const DEFAULT_SETTINGS: Settings = {
   codexLaunchModel: "",
   codexLaunchEffort: "",
   agentBrowserTools: {},
+  agentHarnessTool: HARNESS_TOOL_DEFAULT,
 };
 
 export const QUICK_REPLIES_MAX = 12;
@@ -647,6 +651,7 @@ export function sanitizeSettings(raw: unknown): Settings {
     codexLaunchModel: launchModel("codex", record["codexLaunchModel"]),
     codexLaunchEffort: CODEX_EFFORTS.find((level) => level === record["codexLaunchEffort"]) ?? DEFAULT_SETTINGS.codexLaunchEffort,
     agentBrowserTools: browserToolChoices(record["agentBrowserTools"]),
+    agentHarnessTool: harnessToolSetting(record["agentHarnessTool"]),
   };
 }
 
@@ -1112,3 +1117,4 @@ export function forgetPaneViews(given?: Pick<Storage, "length" | "key" | "remove
   }
   return keys.length;
 }
+import { HARNESS_TOOL_DEFAULT, harnessToolSetting, type HarnessToolSetting } from "../../shared/harness-tool.ts";

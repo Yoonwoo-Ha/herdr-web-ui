@@ -44,6 +44,11 @@ it.each([false, true])("pairs a relay device, authenticates its key, and dispatc
       expect(roster).toEqual({ devices: [expect.objectContaining({ id: device.id, role, current: true, via_relay: true })] });
       expect(roster.devices[0]).not.toHaveProperty("remote_revoke");
       if (role === "watch") {
+        for (const prefix of ["/api", "/api/machines/other"]) for (const action of ["cancel", "release"]) {
+          const res = await handleRequest(new Request(`https://relay.ovis.invalid${prefix}/pane/turn/${action}`, { method: "POST", headers: guard, body: "{}" }), ctx);
+          expect(res?.status).toBe(403);
+          expect(await res?.json()).toMatchObject({ error: { code: "read_only" } });
+        }
         const mutation = await handleRequest(new Request("https://relay.ovis.invalid/api/preferences", { method: "PUT", headers: guard, body: "{}" }), ctx);
         expect(mutation?.status).toBe(403);
         expect(await mutation?.json()).toMatchObject({ error: { code: "read_only" } });

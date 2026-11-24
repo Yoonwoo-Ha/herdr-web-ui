@@ -8,7 +8,8 @@ so the session is open before any client attaches. Nothing in Ovis starts it yet
 
 ```
 ovis-acp-keeper ROOT [--cwd DIR] [--name NAME] [--resume 'CMD {session}' | '["CMD","{session}"]']
-                [--session-meta JSON] [--load SESSION] [--headless] -- AGENT [ARGS...]
+                [--session-meta JSON] [--mcp-servers ARRAY] [--announce-subagents] [--ask-every-time]
+                [--load SESSION] [--headless] -- AGENT [ARGS...]
 ```
 
 ROOT is a directory private to the user (0700). The keeper keeps there:

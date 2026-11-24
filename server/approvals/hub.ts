@@ -28,7 +28,7 @@ import { createHash, randomBytes } from "node:crypto";
 import { chmodSync, lstatSync, mkdirSync, readdirSync, rmSync } from "node:fs";
 import { createServer, type Server, type Socket } from "node:net";
 import { join } from "node:path";
-import { COMPILED, entryCommand, ROOT } from "../entries.ts";
+import { COMPILED, projectSafeCommand, ROOT } from "../entries.ts";
 import { isNonce, keyDigest, LINE_MAX, lineObject, seal, unseal } from "./relay.ts";
 
 export type ApprovalDecision = "allow" | "deny";
@@ -172,8 +172,7 @@ export function hubAddress(dir: string, platform: string = process.platform): st
  * read neither (scripts/server-artifact.ts); from source, Bun gets Ovis's own config and no env file.
  */
 export function relayCommand(root = ROOT, compiled = COMPILED): string[] {
-  const [bun, entry] = entryCommand("approval-hook", root, compiled);
-  return compiled ? [bun, entry] : [bun, `--config=${join(root, "bunfig.toml")}`, "--no-env-file", entry];
+  return projectSafeCommand("approval-hook", root, compiled);
 }
 
 export class ApprovalHub {

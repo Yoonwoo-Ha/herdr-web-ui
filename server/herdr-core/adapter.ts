@@ -907,7 +907,13 @@ function createAnswers(hc: HcConnection, firstTurn: FirstTurn, forgetTurns: (liv
         const front = ready.foreground;
         const frontArgv = front?.argv ?? (front ? [front.name] : []);
         if ([own[0], frontArgv[0]].some((program) => /(?:^|\/)-?fish$/u.test(program ?? "")) && args.some((arg) => arg.includes("\\"))) throw new AdapterError("invalid_params", "fish would read a backslash in an argument differently");
-        const line = startLine(shell, program ?? command, program === undefined ? args : []);
+        const agentArgs = program === undefined ? args : [];
+        const socket = params["ovis_agent_socket"], tokenFile = params["ovis_agent_token_file"];
+        const door = socket !== undefined || tokenFile !== undefined;
+        if (door && (platform === "win32" || typeof socket !== "string" || typeof tokenFile !== "string" || !isAbsolute(socket) || !isAbsolute(tokenFile)
+          || /[\u0000-\u001f\u007f\\]/.test(socket + tokenFile))) throw new AdapterError("invalid_params", "invalid agent tool paths");
+        const line = door ? startLine(shell, "/usr/bin/env", [`OVIS_AGENT_SOCKET=${socket}`, `OVIS_AGENT_TOKEN_FILE=${tokenFile}`, program ?? command, ...agentArgs])
+          : startLine(shell, program ?? command, agentArgs);
         // and a plain shell in front now: a program it runs, or one it `exec`ed (same pid, `exec bash -c …` too), would take the line
         if (!ready.pid || front?.pid !== ready.pid || startShellOf(frontArgv, platform) === null) throw new AdapterError("agent_pane_busy", `pane ${paneId} has no idle shell in front`);
         // on Windows the shell is in front whatever it runs: what it runs is below it

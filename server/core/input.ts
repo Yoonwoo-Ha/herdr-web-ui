@@ -82,13 +82,12 @@ export function createInputLane({ TYPED_SETTLE_MS, KEY_SETTLE_MS, clients, acp, 
       if (child && !child.client.terminalReady) {
         const sessionId = child.client.session;
         const roles = connectionOf(client).roles;
-        void serialize(message.pane_id, () => {
+        void serialize(message.pane_id, async () => {
           if (!clients.has(client)) return;
           authorizeSocket(client);
           if (!mayType(client) || connectionOf(client).roles !== roles || !typingGuards.queuedTyping(sighting.facts())
-            || acp?.forPane(message.pane_id) !== child || !sessionId || child.client.session !== sessionId
-            || (child.client.status !== "working" && child.client.status !== "blocked")) { inputFailed(); return; }
-          child.client.notify("session/cancel", { sessionId });
+            || acp?.forPane(message.pane_id) !== child || !sessionId || child.client.session !== sessionId || !child.client.connected) { inputFailed(); return; }
+          await child.client.hold(sessionId);
           receipt(true);
         }).catch(inputFailed);
         return;

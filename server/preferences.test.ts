@@ -36,6 +36,18 @@ function block(dir: string, name: string): () => void {
 }
 
 describe("shared preferences", () => {
+  it("keeps explicit Off through a legacy save and refuses a malformed replacement", async () => {
+    const dir = root();
+    const store = new PreferenceStore(dir);
+    const off = { level: "off", depth: 1, harnesses: [] };
+    expect((await put(store, JSON.stringify({ settings: { agentHarnessTool: off } }))).status).toBe(200);
+    writeFileSync(join(dir, "preferences.json"), JSON.stringify({ revision: 3, settings: { language: "ko" } }));
+    const restored = new PreferenceStore(dir);
+    expect(restored.get().settings.agentHarnessTool).toEqual(off);
+    expect((await put(restored, JSON.stringify({ settings: { agentHarnessTool: { level: "start", depth: 9, harnesses: [] } } }))).status).toBe(400);
+    restored.set({ settings: { theme: "dark" } });
+    expect(new PreferenceStore(dir).get().settings.agentHarnessTool).toEqual(off);
+  });
   it("sends no id while its file is damaged, and leaves that file as it is", async () => {
     quietly();
     const dir = root();

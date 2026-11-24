@@ -450,6 +450,8 @@ describe("demo transport", () => {
   const answered = (route: string) => exact.has(route) || prefixes.some((prefix) => route.startsWith(prefix));
 
   const DEMO_404: Record<string, string> = {
+    "/api/pane/turn/cancel": "only a live ACP keeper has a turn a person can cancel",
+    "/api/pane/turn/release": "only a live ACP keeper can be handed back",
     "/api/worktree/create-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
     "/api/worktree/remove-checked": "Only the terminal screen sends checkout mutations bound to a herdr-core identity.",
     "/api/account/confirm": "a PC-local screen confirmation (the PC's own confirm page); a browser over the demo never answers one",

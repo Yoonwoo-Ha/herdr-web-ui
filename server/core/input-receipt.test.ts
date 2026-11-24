@@ -57,6 +57,8 @@ it.skipIf(!keeperBuilt)("Stop cancels the running ACP turn instead of typing int
     const live = lane(true, "pty", { forPane: pane => pane === "t1" ? child : undefined });
     live.inputFrames.input(live.phone, { type: "input", pane_id: "t1", text: "\x1b", stop: true });
     await until(client, "cancelled turn", () => client.turn?.stopReason === "cancelled", 2000);
+    expect(client.holdGeneration).toBeNumber();
+    await expect(client.submit("follow-up", "ask")).rejects.toThrow("held by a person");
     const rows = readFileSync(join(root, "archive.jsonl"), "utf8").trim().split("\n").map(line => JSON.parse(line));
     expect(rows.filter(row => row.dir === "to-agent").map(row => JSON.parse(row.raw))).toContainEqual({
       jsonrpc: "2.0", method: "session/cancel", params: { sessionId: client.session },

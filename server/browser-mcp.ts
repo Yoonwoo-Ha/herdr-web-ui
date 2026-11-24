@@ -4,7 +4,7 @@
  * tools of shared/browser-broker.ts and passes each call to the app's socket with the pane's token,
  * read from its file on every call; it holds no browser and no state of its own.
  */
-import { connect } from "node:net";
+import { lineCall, LineClosed, LineTimeout } from "./line-call.ts";
 import { readFileSync } from "node:fs";
 import { createInterface } from "node:readline";
 import { BROWSER_TOOLS, type BrowserAnswer } from "../shared/browser-broker.ts";
@@ -31,7 +31,7 @@ export function brokerOptions(argv: readonly string[]): { socket: string; tokenF
 let nextId = 1;
 
 /** One call on its own connection: the app answers it, or the call fails with words the agent reads. */
-export function callBroker(socket: string, tokenFile: string, tool: string, args: Record<string, unknown>): Promise<Omit<BrowserAnswer, "id">> {
+export async function callBroker(socket: string, tokenFile: string, tool: string, args: Record<string, unknown>): Promise<Omit<BrowserAnswer, "id">> {
   const failed = (words: string): Omit<BrowserAnswer, "id"> => ({ content: [{ type: "text", text: words }], isError: true });
   let token: string;
   try {
@@ -40,35 +40,16 @@ export function callBroker(socket: string, tokenFile: string, tool: string, args
     return Promise.resolve(failed("The Ovis built-in browser is not open to this agent (its token is gone)."));
   }
   const id = nextId++;
-  return new Promise((settle) => {
-    const connection = connect(socket);
-    let buffered = "";
-    const timer = setTimeout(() => { connection.destroy(); settle(failed("The Ovis desktop app did not answer.")); }, CALL_TIMEOUT_MS);
-    let answered = false;
-    const done = (answer: Omit<BrowserAnswer, "id">) => {
-      if (answered) return;
-      answered = true;
-      clearTimeout(timer);
-      connection.end();
-      settle(answer);
-    };
-    connection.setEncoding("utf8");
-    connection.on("connect", () => connection.write(`${JSON.stringify({ id, token, tool, args })}\n`));
-    connection.on("data", (chunk: string) => {
-      buffered += chunk;
-      const end = buffered.indexOf("\n");
-      if (end < 0) return;
-      try {
-        const answer = JSON.parse(buffered.slice(0, end)) as BrowserAnswer;
-        done({ content: answer.content, ...(answer.isError ? { isError: true as const } : {}) });
-      } catch {
-        done(failed("The Ovis desktop app gave an answer that could not be read."));
-      }
-    });
-    connection.on("error", () => done(failed("The Ovis desktop app is not running, or its built-in browser is off.")));
-    // the app quit or its built-in browser was turned off before it answered
-    connection.on("close", () => done(failed("The Ovis desktop app closed the connection before it answered.")));
-  });
+  try {
+    // Browser screenshots have their own size limits in the broker.
+    const answer = await lineCall(socket, { id, token, tool, args }, CALL_TIMEOUT_MS, Infinity) as BrowserAnswer;
+    return { content: answer.content, ...(answer.isError ? { isError: true } : {}) };
+  } catch (error) {
+    if (error instanceof LineClosed) return failed("The Ovis desktop app closed the connection before it answered.");
+    if (error instanceof LineTimeout) return failed("The Ovis desktop app did not answer.");
+    if (error instanceof SyntaxError || error instanceof TypeError) return failed("The Ovis desktop app gave an answer that could not be read.");
+    return failed("The Ovis desktop app is not running, or its built-in browser is off.");
+  }
 }
 
 export async function handle(message: Message, options: { socket: string; tokenFile: string }): Promise<object | null> {

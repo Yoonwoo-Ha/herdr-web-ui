@@ -678,7 +678,7 @@ function claudeInputBoxEndsScreen(screen: string): boolean {
   return /^[❯!]/.test(content) && !/^❯\s*\d+\./.test(content);
 }
 
-async function readPrompt(paneId: string, codexHome?: string, openCodeStateDir?: string, openCodeState = defaultOpenCodeState, signal?: AbortSignal): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[]; snapshot: SessionSnapshot; screen?: string; stale?: boolean; inputUnverified?: true }> {
+export async function readPrompt(paneId: string, codexHome?: string, openCodeStateDir?: string, openCodeState = defaultOpenCodeState, signal?: AbortSignal): Promise<{ agent: string; status: string; prompt: InteractivePrompt | null; pane: HerdrPane; panes: HerdrPane[]; snapshot: SessionSnapshot; screen?: string; stale?: boolean; inputUnverified?: true }> {
   const before = openCodeState.checkpoint();
   const snapshot = await openCodeState.snapshot();
   const { panes } = snapshot;

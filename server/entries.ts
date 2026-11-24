@@ -16,6 +16,7 @@ export const ENTRIES = {
   askpass: "server/ssh-askpass.ts",
   "windows-launch": "server/windows-launch.ts",
   "browser-mcp": "server/browser-mcp.ts",
+  "agent-mcp": "server/agent-tools/mcp.ts",
   "approval-hook": "server/approvals/relay.ts",
   tui: "tui/main.ts",
 } as const;
@@ -43,4 +44,10 @@ export const BUN_ENV: Record<string, string> = COMPILED ? { BUN_BE_BUN: "1" } : 
 
 export function entryCommand(name: EntryName, root = ROOT, compiled = COMPILED): [string, string] {
   return [process.execPath, compiled ? name : join(root, ENTRIES[name])];
+}
+
+/** A relay started in a project must not load that project's .env or preloads. */
+export function projectSafeCommand(name: EntryName, root = ROOT, compiled = COMPILED): string[] {
+  const [bun, entry] = entryCommand(name, root, compiled);
+  return compiled ? [bun, entry] : [bun, `--config=${join(root, "bunfig.toml")}`, "--no-env-file", entry];
 }

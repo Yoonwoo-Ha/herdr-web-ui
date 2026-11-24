@@ -82,6 +82,26 @@ describe.skipIf(!keeperBuilt)("AcpChildren with a fake core running the real kee
     expect(runs()[0]).not.toHaveProperty("parent");
   });
 
+  it("opens a tool child under its caller with its MCP server and without a mode override", async () => {
+    setUp();
+    const server = { name: "ovis-agent", command: "/test/relay", args: ["--token-file", "/test/token"], env: [] };
+    const child = await children.start({ harness: "gjc", argv: [FAKE_AGENT], cwd: dir, parentPane: "t42", runId: "run", mcpServers: [server] });
+    const log = await Bun.file(join(child.root, "archive.jsonl")).text();
+    const messages = log.trim().split("\n").map(line => JSON.parse(line)).filter(row => row.dir === "to-agent").map(row => JSON.parse(row.raw));
+    expect(messages.find(m => m.method === "session/new")?.params).toEqual({ cwd: dir, mcpServers: [server] });
+    expect(runs()[0]).toMatchObject({ parent: "t42", labels: { "ovis.run": "run" } });
+  });
+  it("isolates an all-ask child's permission database and offers no reusable approval", async () => {
+    setUp();
+    const child = await children.start({ harness:"fixture", argv:[FAKE_AGENT], cwd:dir, askEveryTime:true });
+    expect(runs()[0]).toMatchObject({env:{OPENCODE_DB:join(child.root,"opencode.db")}});
+    await child.client.submit("widen");
+    await until(child.client, "approval", () => child.client.pending().length === 1);
+    const [card] = child.client.pending();
+    if (!card) throw new Error("No card");
+    expect(card.options.map(o=>o.kind)).toEqual(["allow_once","reject_once"]);
+  });
+
   for (const lookup of ["available", "unavailable"]) {
     it(`reconciles a lost launch reply with terminal lookup ${lookup}`, async () => {
       setUp();
@@ -119,6 +139,14 @@ describe.skipIf(!keeperBuilt)("AcpChildren with a fake core running the real kee
     expect(fake.terminal(terminal as string).state).not.toBe("live");
     expect(existsSync(join(dir, id))).toBe(false);
     expect(children.forPane(terminal as string)).toBeUndefined();
+  });
+
+  it("reports a session refusal from the adapter instead of waiting for the handshake deadline", async () => {
+    setUp();
+    const err = await children.start({ harness: "test", cwd: dir, argv: [FAKE_AGENT, "--refuse-session", "-32000"] }).catch((e: unknown) => e);
+    expect(err).toMatchObject({ reason: "refused", agentCode: -32000 });
+    expect(kills()).toHaveLength(1);
+    expect(readdirSync(dir)).toEqual([]);
   });
 
   it("stops a child: its terminal is killed, its ROOT removed, and it is forgotten", async () => {

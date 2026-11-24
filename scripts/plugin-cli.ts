@@ -6,7 +6,9 @@
  * internal names. Nothing here reads a file or the network.
  */
 
-export type Command = "start" | "stop" | "status" | "pair" | "link" | "join" | "logout" | "recover" | "confirm" | "phone" | "phone-setup" | "tui";
+import { HARNESS_SKILL } from "../shared/harness-skill.ts";
+
+export type Command = "start" | "stop" | "status" | "pair" | "link" | "join" | "logout" | "recover" | "confirm" | "phone" | "phone-setup" | "tui" | "agent";
 
 export type Parsed =
   | { readonly kind: "help"; readonly text: string }
@@ -54,6 +56,7 @@ const LOGIN: Spec = {
 };
 
 const SPECS: Readonly<Record<string, Spec>> = {
+  agent: { command: "agent", passThrough: true, summary: "Use this coding agent's local harness tools", usage: "ovis agent <machines|harnesses|ls|read|start|send|wait|result|ask|stop> [arguments] --json", more: HARNESS_SKILL },
   login: LOGIN,
   add: LOGIN,
   link: LOGIN,
@@ -123,7 +126,7 @@ const SPECS: Readonly<Record<string, Spec>> = {
 
 const GROUPS: readonly (readonly [string, readonly string[]])[] = [
   ["Connect", ["login", "join", "logout", "pair", "approve", "phone"]],
-  ["Run", ["status", "start", "stop", "tui"]],
+  ["Run", ["status", "start", "stop", "tui", "agent"]],
   ["Recovery (at this PC only)", ["recover", "confirm"]],
 ];
 

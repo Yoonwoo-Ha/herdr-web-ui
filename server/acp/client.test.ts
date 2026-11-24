@@ -8,6 +8,16 @@ import { keeperBuilt, keeperRoot, startKeeper, until } from "./keeper.fake.ts";
 const prompt = (client: KeeperClient, text: string) =>
   client.request("session/prompt", { sessionId: client.session, prompt: [{ type: "text", text }] }) as Promise<{ stopReason: string }>;
 
+it("a disconnected caller can cancel its keeper-readiness wait before replay", async () => {
+  const client = new KeeperClient("", { connect: () => new Socket() });
+  const abort = new AbortController();
+  try {
+    const ready = client.ready(abort.signal).then(() => "ready", () => "cancelled");
+    abort.abort();
+    expect(await Promise.race([ready, new Promise(resolve => setImmediate(() => resolve("still pending")))])).toBe("cancelled");
+  } finally { client.close(); }
+});
+
 it("reserves an answer while replay is pending, without waiting for the watermark twice", async () => {
   const socket = new Socket();
   const client = new KeeperClient("", { connect: () => socket });

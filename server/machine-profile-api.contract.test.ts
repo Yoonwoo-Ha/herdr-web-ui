@@ -578,6 +578,15 @@ async function walk(ask: (path: string, init: RequestInit) => Promise<Response>,
 }
 const answeredFirst = (answer: { status: number; code: string | null }) => answer.code === "machine_profile" || answer.code === "not_found" && answer.status === 404 || answer.code === "method_not_allowed" || answer.status === 405;
 
+it("does not expose keeper turn controls on a profile without an ACP registry", async () => {
+  const { stateDir } = profileServer();
+  for (const action of ["cancel", "release"]) {
+    const response = await owner(stateDir, `/api/pane/turn/${action}`, { method: "POST", headers: { ...headers, origin: "http://localhost", "content-type": "application/json" }, body: JSON.stringify({ pane_id: "t1" }) });
+    expect(response.status).toBe(404);
+    expect(await response.json()).toMatchObject({ error: { code: "not_found" } });
+  }
+});
+
 it.each(["refusing every call", "answering only its snapshot and panes", "not listening"])("answers every failed herdr call with its own words while herdr is %s", async (mode) => {
   const dir = state();
   const config = herdrConfig();

@@ -712,7 +712,7 @@ export class FakeHcCore {
     const terminal: Terminal = {
       address, argv: params.argv ?? (params.line ? ["sh", "-c", params.line] : ["sh"]), cols: size.cols, created_ms: Date.now(), cwd: params.cwd ?? "/",
       die_with_parent: false, exit_code: null, finished_ms: null, identity: "ghostty", keep: params.keep ?? false, labels: { ...params.labels }, name: params.name ?? null,
-      notify: !params.no_notify, parent: null, pid: this.pid(), reason: null, reported: false, rm: params.rm ?? false, rows: size.rows, screen: "exact", signal: null,
+      notify: !params.no_notify, parent: params.parent ?? null, pid: this.pid(), reason: null, reported: false, rm: params.rm ?? false, rows: size.rows, screen: "exact", signal: null,
       state: "live", status: null, status_ms: null, template: null, title: "", turn: 0,
     };
     const held: Held = { terminal, program: this.startProgram(terminal), viewers: [], paint: { body: "", mark: "l", after: "", split: false }, lost: false };
