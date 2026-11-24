@@ -69,6 +69,7 @@ import { savedServerId } from "./relay/identity.ts";
 import { snapshotPorts } from "./account/snapshot-ports.ts";
 import { ListFollow } from "./account/list-follow.ts";
 import { ListKeyStore } from "./account/list-keys.ts";
+import { AccountWitness } from "./account/witness.ts";
 import type { Readmission } from "./account/readmission.ts";
 import { AccountOrder } from "./account/account-order.ts";
 import { accountRowsFor } from "./account/account-devices.ts";
@@ -364,7 +365,7 @@ export function createServer(
   // Step 2 (S2-24): with the release flag on, each pull is followed by a whole read applied to this PC's log and rows
   const serverIdNow = () => ovisRelay.currentIdentity()?.server_id ?? null;
   // Step 2 (S2-25): the rows the account's list admits, kept apart from devices.json and judged by the device store
-  const opened: { rows: ReturnType<typeof accountRowsFor> | null } = { rows: null };
+  const opened: { rows: ReturnType<typeof accountRowsFor> | null; witness: AccountWitness | null } = { rows: null, witness: null };
   // Recovery can use row ports inside the DeviceStore constructor, before its caller has a reference.
   const rowsForDevices = (devices: DeviceStore) => opened.rows = safetyLog !== null && pcAccount !== null && journal !== null && removals !== null ? accountRowsFor(stateDir, serverIdNow, {
     evidence: removals,
@@ -390,6 +391,8 @@ export function createServer(
     },
     admitListedRows: write => devices.admitListedRows(write),
     admitted: (rows) => { devices.announceListAdmissions(rows); },
+    // a row that goes and comes back between two of the record's own steps is not taken for one that stayed
+    rowsWritten: () => { opened.witness?.step(); },
   }) : null;
   const devices: DeviceStore = new DeviceStore(stateDir, merge?.devicesBlocked ?? blocked, accountBlocked, {
     safety: safetyLog, pc: pcAccount, removals, journal, carried, joinedRows: rowsForDevices, held: (key) => accountMailbox.gates().held(key),
@@ -403,6 +406,17 @@ export function createServer(
   devices.onListAdmissions((rows) => joins.addListed(rows.map(({ id, label }) => ({ id, label })), rows[0]!.confirmed_at));
   devices.onListedChange(() => joins.settleListed());
   const accountRows = opened.rows;
+  // for how long this PC has let each key of its account in: it only records, and nothing decides by it yet (witness.ts)
+  const accountWitness = opened.witness = pcAccount === null || accountRows === null ? null : new AccountWitness({
+    stateDir,
+    scope: () => {
+      const serverId = serverIdNow();
+      if (serverId === null) return null;
+      const binding = pcAccount.binding();
+      return { account: binding === null || binding.pending === true ? null : binding.account, serverId };
+    },
+    rows: () => accountRows.store()?.witnessed() ?? null,
+  });
   // the account's signed list, read beside the snapshot and compared with it: it lets nobody in yet (list-follow.ts)
   const accountList = pcAccount === null ? null : new ListFollow({
     stateDir, keys: new ListKeyStore(stateDir), identity: () => ovisRelay.currentIdentity(),
@@ -740,7 +754,7 @@ export function createServer(
       switchRuntime: () => { const answer = options.runtimeService!.request("herdr-core"); return answer.ok ? null : answer.message; },
       ...(options.herdrCoreInstaller ? { installer: options.herdrCoreInstaller } : {}),
     }) : null,
-    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, joins, accountMailbox, accountList, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, catchUp, accountRows, preferences, herdrSidebar, identityOf, serveOnly, tailnetNodes, whoisNode: (address: string) => tailnet.node(address), portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, approvals, acp, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, memory, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, recoveryReleases, lockSignal,
+    options, relay: ovisRelay, relayReceiptIds: new RelayReceiptIds(), hostname, token, bridgeToken, bootId, devices, joins, accountMailbox, accountList, accountWitness, accountIntroductions: new AccountIntroductions(Date.now, join(stateDir, "account-introductions.json")), accountHolds, safetyLog, catchUp, accountRows, preferences, herdrSidebar, identityOf, serveOnly, tailnetNodes, whoisNode: (address: string) => tailnet.node(address), portalGuards, shellAgents, agentDetector, agentOffered, agentInstaller, openCodeState, approvals, acp, cliProxyRoutes, usageLogin, usage, usageAccounts, systemSampler, fontsDir: join(stateDir, "fonts"), voice, memory, browserSnapshot, core, seen, piReader, orderSequence, clientConnectionLog, requestLog, portalStartup, recoveryReleases, lockSignal,
     get localConfirms() { return devices.screenApprovalActive() ? localConfirms : undefined; },
     get pendingRedemptions() { return devices.screenApprovalActive() ? pendingRedemptions : undefined; },
     get keyProofPairings() { return devices.screenApprovalActive() ? keyProofPairings : undefined; },
@@ -755,6 +769,7 @@ export function createServer(
   };
   ovisRelay.resume(services, server.port ?? DEFAULT_PORT);
   accountList?.start();
+  accountWitness?.start();
   accountMailbox.start();
 
   // one listener per address on one port, all or none: a half-bound set would answer where nobody asked it to
@@ -831,6 +846,7 @@ export function createServer(
       services.runtimeMove?.stop();
       accountMailbox.stop();
       accountList?.stop();
+      accountWitness?.stop();
       accountRows?.stop();
       accountCatchUp.stop();
       void ovisRelay.shutdown();

@@ -43,7 +43,7 @@ export function accountRowsFor(stateDir: string, serverId: () => string | null, 
         if (open !== null) {
           open.store.clear("identity_reset");
         }
-        open = { serverId: id, store: new AccountDeviceStore(stateDir, id, ports, schedule) };
+        open = { serverId: id, store: new AccountDeviceStore(stateDir, id, ports, (rows) => { schedule(rows); ports.rowsWritten?.(); }) };
       } finally { switching = false; }
       schedule(open.store.rows());
     }

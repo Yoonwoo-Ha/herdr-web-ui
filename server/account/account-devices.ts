@@ -9,6 +9,7 @@ import type { RemovalEvidence } from "./removal-evidence.ts";
 import { rowDrop } from "./row-drop-evidence.ts";
 import { expiresAt } from "./row-expiry.ts";
 import type { Readmission } from "./readmission.ts";
+import type { WitnessedRow } from "./witness.ts";
 import { firstDevice, holdSecondsLeft, JOIN_HOLD_MS, mayEndHold, type Sayer } from "./join-hold.ts";
 import { CLEARED, loadAccountDevices, type DevicesFile, type AccountRow, type AccountRowPorts, type AccountRowSource, type AccessAnswer, type DropReason, type JournalEntry, type ListCommit } from "./account-device-state.ts";
 export type { AccountRow, AccountRowPorts, AccountRowSource, AccessAnswer, DropReason, JournalEntry, ListCommit } from "./account-device-state.ts";
@@ -163,6 +164,22 @@ export class AccountDeviceStore implements AccountRowSource {
     const row = this.rows().find((candidate) => candidate.id === id && candidate.state === "live");
     if (!row || row.last_signin_day === today) return;
     this.write({ ...this.file, devices: this.file.devices.map((candidate) => candidate.id === id ? { ...candidate, last_signin_day: today } : candidate) });
+  }
+
+  /**
+   * Read only, for the record of how long each key has been let in (witness.ts): every row that is out of its hold and
+   * stands, and whether it lets its key in right now, as `access` would. A row that waits for a whole read stands and
+   * lets nobody in, unless a release a person at this PC gave lets that row in meanwhile; with Step 2 off here no row
+   * does. null for a file that cannot be used, which is no word that its rows are gone.
+   */
+  witnessed(): readonly WitnessedRow[] | null {
+    if (this.error !== null) return null;
+    const now = this.ports.now();
+    const off = this.ports.serviceStep2Off?.() === true;
+    return this.file.devices.filter((row) => row.state === "live" && expiresAt(row) > now).map((row) => {
+      const seen = row.last_signin_day === null ? NaN : Date.parse(row.last_signin_day);
+      return { key: row.key, lets: !off && (!this.waiting.has(row.id) || this.release(row) !== null), seen: Number.isFinite(seen) ? Math.floor(seen / 1000) : null };
+    });
   }
 
   /** P9: the days this PC saw each row used, for page 0 of the next read; an admission alone is no use. */

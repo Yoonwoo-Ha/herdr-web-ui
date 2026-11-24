@@ -75,6 +75,8 @@ export interface AccountRowPorts {
    * start, a republish or a sign-in.
    */
   admitted?(rows: readonly AccountRow[]): void;
+  /** The rows changed and are on disk: a row was let in, left its hold, was used or went. */
+  rowsWritten?(): void;
   now(): number;
   /**
    * Numbers one admission on this PC and returns its origin (PcAccountState.admit in pc-binding.ts, P12, P22): its

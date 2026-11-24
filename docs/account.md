@@ -1448,6 +1448,34 @@ the snapshot so that the day it decides by the list, it has already been checked
   held. A service that answers nothing for the list is a service that is away, never a list that is
   gone.
 
+### How long a key has been let in
+
+A PC in an account keeps a record of how long it has let each of the account's keys in:
+`account-witness.json` in the state folder (readable by your user only). It only records. Nothing
+decides by it in this release: it is kept from now on because moving an account that was in use
+onto its signed list ([account-list.md](account-list.md), "An account that was in use") counts a
+key only where a PC has let it in for a day, and the record has to have run for that day first.
+
+- It holds the account, the PC's relay identity, when it was last written, and per key two counts
+  of seconds and the day the key was last used here. No name, no secret, no moment a key came in.
+- **Whose keys.** The rows the account's list of devices let in on this PC, once a row is out of
+  its ten-second hold. A pairing made at the PC is never in it: the PC cannot tell an owner's
+  pairing from a guest's. A key enters with both counts at nothing. A row that stops standing
+  (the account no longer names it, a removal, a block, 60 days unused) leaves the record at once,
+  and starts at nothing if it is let in again. A row that only waits, for the read after a start
+  or while the account service is away, stays in the record and counts no time meanwhile (unless a
+  person at this PC let that row in for the wait, as `ovis recover` does: then it counts). Time in
+  which the rows could not be read counts for no key.
+- **Two counts, no clock readings compared.** `ran` is the time the PC itself ran with the key let
+  in. `wall` is the time by the clock, which also counts while the PC is off. The record takes the
+  time every four minutes and when the server stops. While the PC runs, `wall` grows by no more
+  than the time it ran and a minute, so a clock set forward adds a minute at most, and one set back takes
+  nothing away. Across a restart `wall` grows by the time since the last write, a day at most, and
+  `ran` does not grow. What was not written at a crash is lost, which only delays.
+- **It goes with the account and the relay identity.** A file written for another account or
+  another relay identity is not taken over, and a PC that leaves its account deletes it. A file
+  that does not read starts the record anew.
+
 ### Confirmed on this PC
 
 With Step 2 on, some acts are taken only when they are confirmed on this PC's own screen

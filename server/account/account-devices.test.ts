@@ -318,3 +318,34 @@ describe("S2-25 account-joined rows in their own file (T34, T35, T44, T49)", () 
     expect(store.standing("0000000000000000")).toBe(false);
   });
 });
+
+describe("what the record of how long a key has been let in reads of the rows (witnessed)", () => {
+  test("a row counts once it is out of its hold; a waiting row lets nobody in unless a release of this PC's own lets that row in", () => {
+    const dir = stateDir();
+    const released = new Set<string>();
+    let off = false;
+    const { ports: p } = ports(dir, { releaseOf: (id) => released.has(id) ? "release-1" : null, serviceStep2Off: () => off });
+    const store = new AccountDeviceStore(dir, SERVER, p);
+    store.commitList(list(["k-1", "k-2"]));
+    // in their hold: no row of the record yet
+    expect(store.witnessed()).toEqual([]);
+    clock.now += JOIN_HOLD_MS;
+    for (const row of store.rows()) expect(store.access(row.id)).toEqual({ ok: true });
+    expect(store.witnessed()).toEqual([{ key: keyOf("k-1"), lets: true, seen: null }, { key: keyOf("k-2"), lets: true, seen: null }]);
+    // after a start every row waits for a whole read
+    const again = new AccountDeviceStore(dir, SERVER, p);
+    const [one] = again.rows();
+    expect(again.witnessed()?.map((row) => row.lets)).toEqual([false, false]);
+    // a release a person at this PC gave lets that one row in while it waits, as its sign-in is let in
+    released.add(one!.id);
+    expect(again.access(one!.id)).toEqual({ ok: true });
+    expect(again.witnessed()?.map((row) => row.lets)).toEqual([true, false]);
+    // with Step 2 off here no row of the account is let in, a released one included
+    off = true;
+    expect(again.witnessed()?.map((row) => row.lets)).toEqual([false, false]);
+    off = false;
+    again.commitList(list(["k-1", "k-2"]));
+    expect(again.witnessed()?.map((row) => row.lets)).toEqual([true, true]);
+  });
+});
+
