@@ -1173,7 +1173,7 @@ async function linkCommand(args: readonly string[]): Promise<number> {
 
 /** `ovis join` (scripts/plugin-join.ts): this PC joins an account with an invite, through the same add as `ovis add`. */
 async function joinCommand(args: readonly string[]): Promise<number> {
-  const [{ absoluteInviteFile, join: joinPc, INVITE_READ_MAX, readInviteFile }, { discardTyped, linkSettings }] = await Promise.all([import("./plugin-join.ts"), import("./plugin-link.ts")]);
+  const [{ absoluteInviteFile, join: joinPc, INVITE_READ_MAX, readInviteFile }, { linkSettings }] = await Promise.all([import("./plugin-join.ts"), import("./plugin-link.ts")]);
   const active = activePluginScript(ROOT, port, APP_STATE_DIR);
   // the release runs in its own folder: a relative invite file is named from here
   if (active !== join(resolve(ROOT), "scripts", "plugin.ts") && resolve(active) !== resolve(import.meta.filename)) return await handOn(active, ["join", ...absoluteInviteFile(args, process.cwd())]);
