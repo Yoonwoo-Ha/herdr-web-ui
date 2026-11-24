@@ -119,6 +119,7 @@ import { relayNoticeOf, useRelayNotice } from "./lib/relayNotice.ts";
 import { useAccountSignedIn } from "./lib/account/useAccountSignedIn.ts";
 import { usePaneObserving } from "./lib/paneObserving.ts";
 import { OpenFileContext } from "./lib/filePaths.ts";
+import { PaneOpenFile } from "./components/PaneOpenFile.tsx";
 import { useAccessState, useLockedRef, usePairFromAddress } from "./lib/useAccess.ts";
 import { useLocalHealth } from "./lib/useLocalHealth.ts";
 import { useMachinesRef, useRecentFolderMemory, useRefetchTimer, useRosterError, useRosterEvents, useRosterLoader, useRosterState } from "./lib/useMachineRoster.ts";
@@ -1323,7 +1324,7 @@ export function App() {
                     tabsInHeader={tabsInHeader || threadDrawn} solo={threadDrawn}
                     renameRequest={active && pane && renameRequest?.machineId === machineId && renameRequest.paneId === pane.pane_id ? renameRequest : null}
                     closeTabRequest={active && pane && closeTabRequest?.machineId === machineId && closeTabRequest.paneId === pane.pane_id ? closeTabRequest : null}
-                    renderPane={(item, itemActive, herdrSplit) => <OpenFileContext.Provider value={item ? (path) => openFile({ path, paneId: item.pane_id, machineId }) : null}>
+                    renderPane={(item, itemActive, herdrSplit) => <PaneOpenFile paneId={item?.pane_id ?? null} machineId={machineId} open={openFile}>
                       <PaneTerminal
                         presentationKey={paneContentKey(machine, item, item ? lensOf(item) : slotView)}
                         deviceWatching={viewOnly(machineId)}
@@ -1366,7 +1367,7 @@ export function App() {
                         onConnectionChange={active && itemActive ? (next, before) => { setConnected(next); setConnectedBefore(before); setReportedBy(`${slot}:${machineId}`); if (next) setOutputStopped(false); } : undefined}
                         onServerMessage={active && itemActive ? handleServerMessage : undefined}
                       />
-                    </OpenFileContext.Provider>} />
+                    </PaneOpenFile>} />
                   </div>
                 </main>
                 </RenderBoundary>

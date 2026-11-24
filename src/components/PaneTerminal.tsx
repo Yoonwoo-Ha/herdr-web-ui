@@ -430,6 +430,9 @@ export function PaneTerminal({
     return () => { for (const action of actions) window.removeEventListener(action, acted, true); };
   }, [waitingOnGrace]);
   const onPeekRef = useRef(onPeek); onPeekRef.current = onPeek;
+  // App hands a new function on each of its renders, and it renders on every pane's event: read through
+  // a ref, the chat's callback keeps its identity, so the conversation is not drawn again for another pane
+  const onOpenTerminalRef = useRef(onOpenTerminal); onOpenTerminalRef.current = onOpenTerminal;
   const onEndPeekRef = useRef(onEndPeek); onEndPeekRef.current = onEndPeek;
   const knownOutcomesRef = useRef<{ pane: string; ids: readonly string[] } | null>(null);
   const onChatOutcomes = useCallback((pane: string, ids: readonly string[]) => { knownOutcomesRef.current = { pane, ids }; }, []);
@@ -471,9 +474,9 @@ export function PaneTerminal({
   }, []);
   const peekOutcome = useCallback((text: string) => {
     const open = onPeekRef.current;
-    if (open === undefined || heldRef.current || unsupportedRef.current || text === "") { onOpenTerminal?.(); return; }
+    if (open === undefined || heldRef.current || unsupportedRef.current || text === "") { onOpenTerminalRef.current?.(); return; }
     open({ command: outcomeCommand(text), text: null, knownOutcomeIds: null, auto: false, watch: null, inputRowSeen: inputRowNow() === "ready" });
-  }, [onOpenTerminal, inputRowNow]);
+  }, [inputRowNow]);
   const setDraft = useCallback((value: InputDraft | ((previous: InputDraft) => InputDraft)) => {
     const owner = paneRef.current ? paneStorageId(machineId, paneRef.current) : null;
     setDraftState((previous) => ({ owner, value: typeof value === "function" ? value(previous.owner === owner ? previous.value : EMPTY_DRAFT) : value }));
