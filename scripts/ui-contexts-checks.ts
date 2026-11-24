@@ -33,6 +33,7 @@ import { checkTerminalKeyboardSuggestions } from "./terminal-keyboard-suggestion
 import { checkSplitView } from "./split-view-regression.ts";
 import { checkTakeOver } from "./take-over-regression.ts";
 import { checkTabOverflow } from "./tab-overflow-regression.ts";
+import { checkTabWorkspaceDrag } from "./tab-workspace-drag-regression.ts";
 import { checkAlertSound } from "./alert-sound-regression.ts";
 import { checkBackgroundTabKeepsTerminalSize, checkChatKeepsTerminalSize, checkFocusedWindowReclaimsTerminalSize, checkPaneSwitchKeepsTerminalSize } from "./chat-size-regression.ts";
 import { checkUpdateNotice } from "./update-notice-regression.ts";
@@ -125,6 +126,7 @@ export async function runUiContextChecks(group: UiContextGroup): Promise<void> {
       await timed("checkTerminalKeyboardSuggestions", () => checkTerminalKeyboardSuggestions(browser!, origin));
       await timed("checkTakeOver", () => checkTakeOver(browser!, origin));
       await timed("checkTabOverflow", () => checkTabOverflow(browser!, origin));
+      await timed("checkTabWorkspaceDrag", () => checkTabWorkspaceDrag(browser!, origin));
       await timed("checkAlertSound", () => checkAlertSound(browser!, origin));
       await timed("checkChatKeepsTerminalSize", () => checkChatKeepsTerminalSize(browser!, origin));
       await timed("checkPaneSwitchKeepsTerminalSize", () => checkPaneSwitchKeepsTerminalSize(browser!, origin));

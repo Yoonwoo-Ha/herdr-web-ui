@@ -42,6 +42,7 @@ const stripsShowing = new Map<string, number>();
 const stripLayout = (): string => typeof window === "undefined" || !window.matchMedia ? "" : `${window.matchMedia(HEADER_TABS_QUERY).matches}|${window.matchMedia(SHEET_QUERY).matches}`;
 const FOCUS_HANDOFF_MS = 500;
 const HEADER_TABS_QUERY = "(min-width: 769px)";
+const EMPTY_WORKSPACE_TARGETS: ReadonlySet<string> = new Set();
 
 const said = (reason: unknown): string => reason instanceof ApiError ? reason.detail : reason instanceof Error ? reason.message : String(reason);
 
@@ -163,8 +164,40 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   const panes = rosterPanes(snapshot.panes.filter((pane) => pane.workspace_id === workspace.workspace_id), selectedPane.pane_id);
   // The snapshot order is authoritative; number identifies a tab and does not change on a move.
   const tabs = snapshot.tabs.filter((tab) => tab.workspace_id === workspace.workspace_id);
+  const moveToWorkspace = (tab: HerdrTab, targetWorkspaceId: string): void => {
+    setError(null);
+    void onMoveToWorkspace?.(tab.tab_id, targetWorkspaceId).catch((reason: unknown) => setError(routeMissing(reason) ? t("This PC's bridge does not offer this yet") : t("Move failed: {reason}", { reason: said(reason) })));
+  };
+  // Re-evaluated from the latest snapshot on move, refresh, and drop so a tab that splits or loses
+  // move eligibility mid-drag clears its sidebar highlight and never moves on drop.
+  const workspaceDropTargets = (tabId: string): ReadonlySet<string> => {
+    if (!closable || onMoveToWorkspace === undefined || !moveOffered) return EMPTY_WORKSPACE_TARGETS;
+    const tab = tabs.find((entry) => entry.tab_id === tabId);
+    if (!tab) return EMPTY_WORKSPACE_TARGETS;
+    const ownAll = snapshot.panes.filter((entry) => entry.tab_id === tab.tab_id);
+    if (ownAll.length !== 1 || !panes.some((entry) => entry.tab_id === tab.tab_id)) return EMPTY_WORKSPACE_TARGETS;
+    const targets = moveDestinations(snapshot.workspaces, ownAll[0], workspace.workspace_id);
+    return targets.length > 0 ? new Set(targets.map((entry) => entry.workspace_id)) : EMPTY_WORKSPACE_TARGETS;
+  };
+  const latestWorkspaceDrag = useRef({
+    targets: workspaceDropTargets,
+    move: (tabId: string, targetWorkspaceId: string): void => {
+      if (!workspaceDropTargets(tabId).has(targetWorkspaceId)) return;
+      const tab = tabs.find((entry) => entry.tab_id === tabId);
+      if (tab) moveToWorkspace(tab, targetWorkspaceId);
+    },
+  });
+  latestWorkspaceDrag.current = {
+    targets: workspaceDropTargets,
+    move: (tabId: string, targetWorkspaceId: string): void => {
+      if (!workspaceDropTargets(tabId).has(targetWorkspaceId)) return;
+      const tab = tabs.find((entry) => entry.tab_id === tabId);
+      if (tab) moveToWorkspace(tab, targetWorkspaceId);
+    },
+  };
   // a watching device moves no tab (the server refuses it read_only): the order is fixed for it as for the Herdr app's
   const reorderable = arrange && closable;
+  const externalDragActive = useRef(false);
   const reorder = useTabReorder({ owner: `${machineId}:${workspace.workspace_id}`, tabs, strip, moveTab, fixed: !reorderable,
     failed: (reason) => setError(t("Move failed: {reason}", { reason: said(reason) })),
     stale: () => setError(t("Tab order did not refresh. Try again.")),
@@ -172,11 +205,34 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
       start: (tabId) => {
         const tab = tabs.find((entry) => entry.tab_id === tabId);
         const pane = tab ? paneFor(tab) : undefined;
-        if (pane) paneDrag.start({ machineId, paneId: pane.pane_id });
+        if (!tab || !pane) return;
+        externalDragActive.current = true;
+        paneDrag.start(
+          { machineId, paneId: pane.pane_id },
+          {
+            targets: () => latestWorkspaceDrag.current.targets(tab.tab_id),
+            move: (targetWorkspaceId) => latestWorkspaceDrag.current.move(tab.tab_id, targetWorkspaceId),
+          },
+        );
       },
-      move: paneDrag.move, back: paneDrag.back, drop: paneDrag.drop, cancel: paneDrag.cancel,
+      move: paneDrag.move,
+      back: paneDrag.back,
+      drop: (x, y) => { externalDragActive.current = false; paneDrag.drop(x, y); },
+      cancel: () => { externalDragActive.current = false; paneDrag.cancel(); },
     } : undefined,
   });
+  const draggedTabId = reorder.drag?.tabId ?? null;
+  const draggedWorkspaceTargets = draggedTabId === null ? "" : [...workspaceDropTargets(draggedTabId)].join("\0");
+  useLayoutEffect(() => {
+    if (draggedTabId !== null) paneDrag.refresh();
+  }, [draggedTabId, draggedWorkspaceTargets]);
+  useLayoutEffect(() => {
+    if (!splitDrag && externalDragActive.current) {
+      externalDragActive.current = false;
+      reorder.cancelDrag();
+      paneDrag.cancel();
+    }
+  }, [splitDrag]);
   const firstLines = useSyncExternalStore(subscribeTabLabels, shownTabLabels, shownTabLabels);
   const placeOf = (tab: HerdrTab): number => tabs.findIndex((candidate) => candidate.tab_id === tab.tab_id) + 1;
   // a tab herdr still names by its number shows a few words of its first message (#2019); never herdr's own label
@@ -570,10 +626,6 @@ export function TabStrip({ snapshot, workspace, selectedPane, onSelectPane, onNe
   // herdr moves a tab to another workspace only as its one pane: a split tab is not offered it
   const destinations = (tab: HerdrTab) => moveDestinations(snapshot.workspaces, snapshot.panes.find((pane) => pane.tab_id === tab.tab_id), workspace.workspace_id);
   const canMoveOut = (tab: HerdrTab): boolean => onMoveToWorkspace !== undefined && moveOffered && panesOf(tab).length === 1 && destinations(tab).length > 0;
-  const moveToWorkspace = (tab: HerdrTab, workspaceId: string): void => {
-    setError(null);
-    void onMoveToWorkspace?.(tab.tab_id, workspaceId).catch((reason: unknown) => setError(routeMissing(reason) ? t("This PC's bridge does not offer this yet") : t("Move failed: {reason}", { reason: said(reason) })));
-  };
   const workspaceItems = (tab: HerdrTab): RowMenuItem[] => destinations(tab).map((entry) => ({
     id: `workspace:${entry.workspace_id}`, label: entry.label, icon: Folder, run: () => moveToWorkspace(tab, entry.workspace_id),
   }));

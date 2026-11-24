@@ -302,7 +302,7 @@ export function useSplitLayout({ machines, split, wideScreen, selectedPaneId, se
   useEffect(() => {
     if (!tabDrag || !splitDragOn) { if (!tabDrag) hideDropTarget(); return; }
     const point = tabDrag.point;
-    if (point) showZoneAtRef.current(point.x, point.y); else hideDropTarget();
+    if (point && !tabDrag.workspaceTarget) showZoneAtRef.current(point.x, point.y); else hideDropTarget();
   }, [tabDrag, splitDragOn, hideDropTarget]);
   const dividers = splitOn ? splitDividers(split.root) : [];
   const resizeDivider = useCallback((path: string, ratio: number): void => {
