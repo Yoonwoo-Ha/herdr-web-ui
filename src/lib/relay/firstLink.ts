@@ -8,7 +8,8 @@ import type { RelayFailure } from "./shellState.ts";
 
 /**
  * A pairing with a marked code (`admission: 1`) stopped before it reached the PC, so the code was not used: no sign-in
- * to vouch with, or the account service did not take the admission (the account does not list the PC, its adds are
+ * to vouch with, or one the account service refused as too old to list the PC (`sign-in`: either way a sign-in on the
+ * failure screen goes on with the same pairing), or the account service did not take the admission (the account does not list the PC, its adds are
  * used up for now, it did not answer, or it refused this device).
  * `new-key`: after the pairing, the account key changed and the account service did not take the new one, so no link
  * was sent.

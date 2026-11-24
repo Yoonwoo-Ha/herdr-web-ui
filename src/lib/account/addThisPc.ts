@@ -4,11 +4,12 @@
  * pairing window whose comparisons only this PC approves. A device already in the account then
  * adds it with one approval: it types the number this PC shows, and the owner approves here.
  */
+import type { AccountOs } from "../../../shared/account-asker.ts";
 import { importPublicKey } from "../../../shared/relay-e2ee.ts";
 import { decodeOffer, type RelayOffer } from "../../../shared/relay-offer.ts";
 import { closeRelayLink, fetchHealth, requestRelayLink } from "../api.ts";
 import { apiFetch } from "../api-request-id.ts";
-import { isLoopbackHost } from "../phone.ts";
+import { deviceOs, isLoopbackHost } from "../phone.ts";
 import { serverIdOfPath } from "../shellMode.ts";
 import { pcAccountStatus, within } from "./join.ts";
 import { NEW_PC_MS } from "./myPcs.ts";
@@ -72,6 +73,15 @@ async function openAddWindow(): Promise<{ readonly url: string; readonly windowI
   for (let seen: Promise<unknown> | null = null; seen !== closing;) { seen = closing; await seen; }
   const { url, window_id } = await requestRelayLink({ localOnly: true });
   return { url, windowId: typeof window_id === "string" && /^[0-9a-f]{32}$/.test(window_id) ? window_id : undefined };
+}
+
+/**
+ * The system this browser runs, sent with a listing this page makes: where the listing asks to join (a sign-in code's), the
+ * account's devices show it on its card, as the link page shows the one its sign-in named. On the PC's own window, the PC's.
+ */
+function listingOs(): { readonly os?: AccountOs } {
+  const os = typeof navigator === "undefined" ? null : deviceOs(navigator.userAgent ?? "", navigator.maxTouchPoints ?? 0);
+  return os === null ? {} : { os };
 }
 
 /** A POST of `{}` to this PC's own API, as ownPcProof asks it: the answer's JSON, or a rejection naming the refusal. */
@@ -245,7 +255,7 @@ export async function listThisPc(service: AccountService, options: { relistMs: n
     // this PC's own proof, which alone lists it again after `ovis logout` left the account
     const proof = await ownPcProof(offer.server_id, postToThisPc);
     running();
-    await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay, ...proof });
+    await directory.putPc(offer.server_id, { label: name, public_key: publicKey, relay: offer.relay, ...listingOs(), ...proof }, undefined, undefined, { prove: true });
   }
   // the account this PC now asks its relay pass under (docs/relay.md, "Relay pass"); an older PC has no such route
   // (not for a wait or an attempt that ended while the entry was written: nobody waits for this PC under it)
@@ -334,5 +344,5 @@ export async function listOfferedPc(service: AccountService, offer: RelayOffer, 
   const directory = service.forSignIn(session);
   if ((await directory.listPcs()).some((pc) => pc.server_id === offer.server_id)) return;
   const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay });
+  await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay, ...listingOs() }, undefined, undefined, { prove: true });
 }

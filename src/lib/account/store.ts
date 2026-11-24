@@ -29,6 +29,8 @@ export interface AccountSession {
   readonly expires_at: number;
   /** which sign-in this is, kept by every refresh: random for one made by this build (sessionOf), a digest of the saved refresh token for one saved before sign-ins had an id (service.ts, session) */
   readonly sign_in_id?: string;
+  /** when this sign-in was made, in ms by this device's clock (sessionOf), kept by every refresh; absent from one saved before it was kept */
+  readonly signed_in_at?: number;
 }
 
 /** A sign-in sent to the provider's pages: what its return must match (OAuth `state`) and prove (PKCE verifier). */

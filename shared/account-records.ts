@@ -181,6 +181,20 @@ export function registerSigningBytes(account: string, key: string, challengeId: 
   return signingBytes([account, key, challengeId, challenge], DEVICE_REGISTER_PREFIX);
 }
 
+export const PC_ADD_PREFIX = "ovis-pc-add/1";
+/** What a key proof adds a PC by: the one-press admit, a confirm (`PUT` with `confirm: true`), or a `PUT` listing a PC the account does not list yet. */
+export type PcAddPurpose = "admit" | "confirm" | "list";
+
+/**
+ * What a sign-in's registered key signs to add a PC once that sign-in is older than ten minutes (docs/account.md, "In
+ * one press"): `ovis-pc-add/1`, then the purpose, the account, the PC's server_id, the listing ID (the one a confirm
+ * names, else the PC's current one, "" when the account lists none), the challenge id and the challenge, laid out as
+ * registerSigningBytes lays out its own. Must stay byte-for-byte equal to the account service's.
+ */
+export function pcAddSigningBytes(purpose: PcAddPurpose, account: string, serverId: string, listingId: string, challengeId: string, challenge: string): Uint8Array<ArrayBuffer> {
+  return signingBytes([purpose, account, serverId, listingId, challengeId, challenge], PC_ADD_PREFIX);
+}
+
 /** Device table P24 (rule R2): the kinds of the PC's safety log. */
 export type SafetyRecordKind = "block" | "freeze" | "lift" | "lock" | "unlock" | "forget";
 

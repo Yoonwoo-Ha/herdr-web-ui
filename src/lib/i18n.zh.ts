@@ -259,6 +259,8 @@ const BASE: Record<string, string> = {
   "Add it only if you started adding that PC yourself and entered the code it showed. If someone else gave you the code, or you did not start this, press No.": "只有你自己刚开始添加那台电脑，并输入了它显示的代码，才添加它。如果代码是别人给你的，或者不是你发起的，请点“不”。",
   "Add|account pc": "添加",
   "No|account pc": "不",
+  "Expires in {minutes} min": "{minutes} 分钟后过期",
+  "This request ran out. To add this PC, start again on the PC.": "请求已过期。要添加这台电脑，请在那台电脑上重新开始。",
   "{name} was added to your account before this phone joined. Did you add it?": "{name} 在这部手机加入之前已添加到你的账号。是你自己添加的吗？",
   "{name} was added to your account before this device joined. Did you add it?": "{name} 在这台设备加入之前已添加到你的账号。是你自己添加的吗？",
   "Yes|account pc": "是",

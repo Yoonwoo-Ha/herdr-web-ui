@@ -376,11 +376,14 @@ for it before they show or ask anything.
   only, `--account` or not. Then it lists this PC in the account ([Adding a PC](account.md#adding-a-pc))
   and waits: **Open Ovis on your phone or another PC and press Add for (this PC)**. Every device signed in
   to that account with a sign-in of its own shows this PC's card, **Add this PC to your account?**,
-  with the name the PC gave itself and when it was listed. **Add** there is the account's one-press
-  admission of this PC (`POST /v1/pcs/{server_id}/admit`, [In one press](account.md#adding-a-pc)): the
-  account service takes it from a sign-in made in that app within the last 10 minutes (an older one
-  gets **Sign in again**, and the add goes on after it), within the account's daily cap of such
-  adds, and tells the account's other devices. The command asks this PC every 6 seconds (every 15
+  with the name the PC gave itself, the system it runs (the command sends this PC's platform) and
+  roughly where it asked from, when it was listed and the minutes left. **Add** there is the
+  account's one-press admission of this PC (`POST /v1/pcs/{server_id}/admit`, [In one
+  press](account.md#adding-a-pc)): the account service takes it from a sign-in made in that app
+  within the last 10 minutes, or an older one that the phone app or app.ovis.sh proves by itself with
+  the key that sign-in registered (any other sign-in older than that gets **Sign in again**, and the
+  add goes on after it), within the account's daily cap of such adds, and tells the account's other
+  devices. The command asks this PC every 6 seconds (every 15
   after the account service did not answer it) to take that admission (`POST /api/account/one-press`
   with the account that signed in): the PC asks the account service itself, with its relay key's
   proof, so only an admission by that account, made for this PC's listing, binds it. Then the PC
@@ -390,8 +393,10 @@ for it before they show or ask anything.
   in, and the approve-here window that listing the PC opens is closed at once (`POST
   /api/relay/link/close`): no digits come through it. The wait lasts as long as the card offers
   **Add**: 10 minutes from when this PC was listed, so less for a listing an earlier run left, and
-  none for one listed more than 10 minutes ago, which the card offers to remove only (the command
-  says so). A PC the account lists as its own already (an **Add** pressed for an earlier run) shows
+  none for one listed more than 10 minutes ago, for which the card offers **No** or **Remove from my
+  account** only (the command says so). The account service counts its own 10 minutes from the
+  sign-in that listed the PC, a little before the listing, so an **Add** in the wait's last seconds may
+  be refused (`listing_expired`). A PC the account lists as its own already (an **Add** pressed for an earlier run) shows
   no card: the command takes that admission while it lasts, and after its 10 minutes says to run
   `add --approve` instead. When the run ends without the add (the 10 minutes, Ctrl+C, a SIGTERM, the terminal
   closing, a refusal at the PC), it first reads which account this PC is in (it may have taken the

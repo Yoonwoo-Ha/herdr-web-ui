@@ -1,9 +1,10 @@
 import { describe, expect, test } from "bun:test";
 import nacl from "tweetnacl";
 import { bytesToHex } from "@noble/hashes/utils.js";
-import { exportAccountKey, newRecordId, signAccountRecord, signSafetyRecord, type AccountRecord } from "./account-records.ts";
+import { exportAccountKey, newRecordId, pcAddSigningBytes, signAccountRecord, signSafetyRecord, type AccountRecord, type PcAddPurpose } from "./account-records.ts";
 import { assembleSnapshot, parseSnapshotPage, type AccountSnapshotPage } from "./account-snapshot.ts";
-import { SNAPSHOT_PAGE, ACCESS_TOKEN_TTL_S, ADMISSION_TTL_MS, ACCOUNT_RING, ADMISSIONS_PER_WINDOW, DEVICE_POLL_S, DIRECTORY_MAX, FakeAccountService, isAllowedRedirect, MAILBOX_TTL_MS, PC_LEFT_MS, WEB_REDIRECT, type FakePc } from "./account-service-fake.ts";
+import { SNAPSHOT_PAGE, ACCESS_TOKEN_TTL_S, ADMISSION_TTL_MS, ACCOUNT_RING, ADMISSIONS_PER_WINDOW, DEVICE_POLL_S, DIRECTORY_MAX, FakeAccountService, isAllowedRedirect, LISTING_ASKS_MS, MAILBOX_TTL_MS, PC_ADD_CHALLENGE_TTL_MS, PC_LEFT_MS, WEB_REDIRECT, type FakePc } from "./account-service-fake.ts";
+import { toBase64Url } from "./relay-pair-sas.ts";
 import { answerServerChallenge, deriveServerId, serverChallenge, verifyServerProof, type ProofRoute } from "./relay-server-proof.ts";
 
 const BASE = "https://account.test";
@@ -771,3 +772,126 @@ describe("a PC's own leave (account#65)", () => {
     expect(await listed(service, token)).toEqual([machine.serverId]);
   });
 });
+
+describe("adding a PC with an old sign-in's key proof, and who asks", () => {
+  const DAY = 24 * 60 * 60_000;
+  /** the account service with Step 2 on, its clock, and an own sign-in made now with the key it registered */
+  async function signedIn() {
+    let now = Date.now();
+    const service = new FakeAccountService(() => now);
+    service.opensAll = true;
+    const own = service.issueToken("acct_1");
+    const key = await client();
+    service.registerSessionKey(own, key.spki, "Phone");
+    const send = (method: string, path: string, token: string, body?: unknown) => service.fetch(new Request(BASE + path, {
+      method, headers: { authorization: `Bearer ${token}`, ...(body === undefined ? {} : { "content-type": "application/json" }) }, ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+    }));
+    const answer = async (response: Response) => response.ok ? response.status : `${response.status} ${((await response.json()) as { error?: { code?: string } }).error?.code}`;
+    const entry = (machine: ReturnType<typeof pc>, extra: Record<string, unknown> = {}) => ({ label: "desk", public_key: machine.publicKey, relay: "wss://relay.test", ...extra });
+    const listing = (machine: ReturnType<typeof pc>) => service.pcs("acct_1").find((row) => row.server_id === machine.serverId)?.listing_id ?? "";
+    /** a proof by `signer` for this add, over the PC's current listing unless `over` names another */
+    const proof = async (token: string, signer: Awaited<ReturnType<typeof client>>, purpose: PcAddPurpose, machine: ReturnType<typeof pc>, over?: string) => {
+      const { challenge_id, challenge, expires_in } = await (await send("POST", "/v1/pcs/challenge", token, {})).json() as { challenge_id: string; challenge: string; expires_in: number };
+      expect(expires_in * 1000).toBe(PC_ADD_CHALLENGE_TTL_MS);
+      const bytes = pcAddSigningBytes(purpose, "acct_1", machine.serverId, over ?? listing(machine), challenge_id, challenge);
+      return { challenge_id, signature: toBase64Url(new Uint8Array(await crypto.subtle.sign({ name: "ECDSA", hash: "SHA-256" }, signer.pair.privateKey, bytes))) };
+    };
+    const typedIn = async (machine: ReturnType<typeof pc>, extra: Record<string, unknown> = {}) => expect(await answer(await send("PUT", `/v1/pcs/${machine.serverId}`, service.issueToken("acct_1", { device: true }), entry(machine, extra)))).toBe(200);
+    return { service, own, key, send, answer, entry, proof, typedIn, pass: (ms: number) => { now += ms; } };
+  }
+
+  test("the challenge is an own sign-in's: a device code's is refused, and it does not exist with Step 2 off or before key proofs", async () => {
+    const { service, own, send, answer } = await signedIn();
+    expect(await answer(await send("POST", "/v1/pcs/challenge", own, {}))).toBe(200);
+    expect(await answer(await send("POST", "/v1/pcs/challenge", service.issueToken("acct_1", { device: true }), {}))).toBe("403 own_sign_in_required");
+    service.opensAll = false;
+    expect(await answer(await send("POST", "/v1/pcs/challenge", own, {}))).toBe("404 not_found");
+    service.opensAll = true;
+    service.pcAddProofs = false;
+    expect(await answer(await send("POST", "/v1/pcs/challenge", own, {}))).toBe("404 not_found");
+  });
+
+  test("an old own sign-in admits only with a proof by its own key for that PC's listing; a replay, a bad shape or another key adds nothing", async () => {
+    const { service, own, key, send, answer, proof, typedIn, pass } = await signedIn();
+    const machine = pc();
+    pass(30 * DAY);
+    await typedIn(machine);
+    const admit = (body: unknown) => send("POST", `/v1/pcs/${machine.serverId}/admit`, own, body);
+    expect(await answer(await admit({}))).toBe("403 session_not_fresh");
+    expect(await answer(await admit({ key_proof: { challenge_id: "x", signature: "y" } }))).toBe("400 invalid_request");
+    expect(await answer(await admit({ key_proof: await proof(own, await client(), "admit", machine) }))).toBe("403 session_not_fresh");
+    expect(await answer(await admit({ key_proof: await proof(own, key, "confirm", machine) }))).toBe("403 session_not_fresh");
+    expect(await answer(await admit({ key_proof: await proof(own, key, "admit", machine, "0".repeat(32)) }))).toBe("403 session_not_fresh");
+    const good = await proof(own, key, "admit", machine);
+    expect(await answer(await admit({ key_proof: good }))).toBe(200);
+    expect(await answer(await admit({ key_proof: good }))).toBe("400 challenge_invalid");
+    expect(service.pcs("acct_1")[0]?.listed_by_device).toBe(false);
+  });
+
+  test("a challenge is good for two minutes, and only for the sign-in that asked for it", async () => {
+    const { service, own, key, send, answer, proof, typedIn, pass } = await signedIn();
+    const machine = pc();
+    pass(30 * DAY);
+    await typedIn(machine);
+    const late = await proof(own, key, "admit", machine);
+    pass(PC_ADD_CHALLENGE_TTL_MS + 1);
+    expect(await answer(await send("POST", `/v1/pcs/${machine.serverId}/admit`, own, { key_proof: late }))).toBe("400 challenge_invalid");
+    const other = service.issueToken("acct_1");
+    expect(await answer(await send("POST", `/v1/pcs/${machine.serverId}/admit`, other, { key_proof: await proof(own, key, "admit", machine) }))).toBe("400 challenge_invalid");
+  });
+
+  test("a confirm, and the listing of a PC the account does not list yet, ask the same; upkeep and a device code's listing ask nothing", async () => {
+    const { service, own, key, send, answer, entry, proof, typedIn, pass } = await signedIn();
+    pass(30 * DAY);
+    const [typed, fresh, kept] = [pc(), pc(), pc()];
+    await typedIn(typed);
+    expect(await answer(await send("PUT", `/v1/pcs/${typed.serverId}`, own, entry(typed, { confirm: true })))).toBe("403 session_not_fresh");
+    expect(await answer(await send("PUT", `/v1/pcs/${typed.serverId}`, own, entry(typed, { confirm: true, key_proof: await proof(own, key, "confirm", typed) })))).toBe(200);
+    expect(await answer(await send("PUT", `/v1/pcs/${fresh.serverId}`, own, entry(fresh)))).toBe("403 session_not_fresh");
+    expect(service.pcs("acct_1").map((row) => row.server_id)).not.toContain(fresh.serverId);
+    expect(await answer(await send("PUT", `/v1/pcs/${fresh.serverId}`, own, entry(fresh, { key_proof: await proof(own, key, "list", fresh) })))).toBe(200);
+    expect(service.pcs("acct_1").find((row) => row.server_id === fresh.serverId)?.listed_by_device).toBe(false);
+    // upkeep of a PC the account lists reads no proof, and a device code lists unconfirmed, whatever their age
+    expect(await answer(await send("PUT", `/v1/pcs/${fresh.serverId}`, own, entry(fresh, { label: "renamed" })))).toBe(200);
+    const typedOld = service.issueToken("acct_1", { device: true });
+    pass(30 * DAY);
+    expect(await answer(await send("PUT", `/v1/pcs/${kept.serverId}`, typedOld, entry(kept)))).toBe(200);
+    // with the service's list rule off, as it ships at first, a listing that sends no proof goes through; one sent is judged
+    service.listProofRequired = false;
+    const [quiet, badly] = [pc(), pc()];
+    expect(await answer(await send("PUT", `/v1/pcs/${quiet.serverId}`, own, entry(quiet)))).toBe(200);
+    expect(await answer(await send("PUT", `/v1/pcs/${badly.serverId}`, own, entry(badly, { key_proof: await proof(own, await client(), "list", badly) })))).toBe("403 session_not_fresh");
+    service.listProofRequired = true;
+    // before key proofs an old own sign-in listed a new PC without one, and a confirm was judged by its age alone
+    service.pcAddProofs = false;
+    const [before, typedBefore] = [pc(), pc()];
+    expect(await answer(await send("PUT", `/v1/pcs/${before.serverId}`, own, entry(before)))).toBe(200);
+    await typedIn(typedBefore);
+    expect(await answer(await send("PUT", `/v1/pcs/${typedBefore.serverId}`, own, entry(typedBefore, { confirm: true, key_proof: { challenge_id: "0".repeat(32), signature: "A".repeat(86) } })))).toBe("403 session_not_fresh");
+    expect(await answer(await send("POST", `/v1/pcs/${typedBefore.serverId}/admit`, own, { key_proof: { challenge_id: "0".repeat(32), signature: "A".repeat(86) } }))).toBe("400 invalid_request");
+  });
+
+  test("a listing that asks to join says who asks and until when, is let in only within its ten minutes, and any own sign-in says No to it", async () => {
+    const { service, own, key, send, answer, entry, proof, typedIn, pass } = await signedIn();
+    service.requestPlace = { country: "KR", city: "Seoul" };
+    const [asking, lapsed, member] = [pc(), pc(), pc()];
+    await typedIn(asking, { os: "linux" });
+    const row = async (machine: ReturnType<typeof pc>) => ((await (await send("GET", "/v1/pcs?include=unconfirmed", own)).json()) as { pcs: Record<string, unknown>[] }).pcs.find((each) => each.server_id === machine.serverId);
+    const { asking_os, asking_country, asking_city, asking_until } = (await row(asking))!;
+    expect({ asking_os, asking_country, asking_city }).toEqual({ asking_os: "linux", asking_country: "KR", asking_city: "Seoul" });
+    expect(Date.parse(asking_until as string) - Date.now()).toBeGreaterThan(LISTING_ASKS_MS - 60_000);
+    await typedIn(lapsed);
+    pass(LISTING_ASKS_MS + 1);
+    expect(await answer(await send("POST", `/v1/pcs/${lapsed.serverId}/admit`, own, { key_proof: await proof(own, key, "admit", lapsed) }))).toBe("409 listing_expired");
+    expect(await answer(await send("PUT", `/v1/pcs/${lapsed.serverId}`, own, entry(lapsed, { confirm: true, key_proof: await proof(own, key, "confirm", lapsed) })))).toBe("409 listing_expired");
+    // No needs no new sign-in for a listing that asks; removing a PC that is the account's still does
+    expect(await answer(await send("DELETE", `/v1/pcs/${lapsed.serverId}`, own))).toBe(204);
+    expect(await answer(await send("PUT", `/v1/pcs/${member.serverId}`, own, entry(member, { key_proof: await proof(own, key, "list", member) })))).toBe(200);
+    expect(await answer(await send("DELETE", `/v1/pcs/${member.serverId}`, own))).toBe("403 reauth_required");
+    // the service before key proofs says nothing of who asks, and asks a new sign-in for every No
+    service.pcAddProofs = false;
+    expect(Object.keys((await row(asking))!).filter((name) => name.startsWith("asking_"))).toEqual([]);
+    expect(await answer(await send("DELETE", `/v1/pcs/${asking.serverId}`, own))).toBe("403 reauth_required");
+  });
+});
+

@@ -34,7 +34,7 @@ import qrcode from "qrcode-generator";
 
 import { isLoopbackHost } from "../server/access.ts";
 import { fleetPreview } from "../server/preview.ts";
-import { accountOsOfPlatform } from "../shared/account-asker.ts";
+import { accountOsOfPlatform, type AccountOs } from "../shared/account-asker.ts";
 import { decodeOffer } from "../shared/relay-offer.ts";
 import { DEFAULT_ACCOUNT_SERVICE } from "../shared/web-policy.ts";
 import { importPublicKey } from "../shared/relay-e2ee.ts";
@@ -866,7 +866,8 @@ async function endCode(api: Api, mine: Mine): Promise<"both" | "gone" | "typed" 
   }
 }
 
-interface Listing { readonly serverId: string; readonly entry: { label: string; public_key: string; relay: string } }
+/** `os`: the system this PC runs, which the card of a listing that asks to join shows the account's devices */
+interface Listing { readonly serverId: string; readonly entry: { label: string; public_key: string; relay: string; os?: AccountOs } }
 
 /**
  * Lists this PC in the account with its relay key, which opens the approve-here window (addThisPc.ts
@@ -902,7 +903,8 @@ async function openedListing(api: Api): Promise<Listing> {
   if (offer === null) throw new LocalError("This PC's pairing link did not parse.");
   const label = (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48);
   const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-  return { serverId: offer.server_id, entry: { label, public_key: publicKey, relay: offer.relay } };
+  const os = accountOsOfPlatform(process.platform);
+  return { serverId: offer.server_id, entry: { label, public_key: publicKey, relay: offer.relay, ...(os === null ? {} : { os }) } };
 }
 
 /**
@@ -1749,7 +1751,7 @@ async function addByPress(options: LinkOptions, api: Api, press: Pressing): Prom
   const startedAt = now();
   const stopAt = Math.min(startedAt + PRESS_MS, press.listedAt === null ? Infinity : press.listedAt + PRESS_MS);
   if (stopAt <= startedAt) {
-    out(`An earlier ${command} listed this PC in your account at ${clockTime(press.listedAt!)}, more than 10 minutes ago, so your devices no longer offer Add for it. On a device of your account, choose Remove from my account on its card, then run ${command} again.\n`);
+    out(`An earlier ${command} listed this PC in your account at ${clockTime(press.listedAt!)}, more than 10 minutes ago, so your devices no longer offer Add for it. On a device of your account, choose No or Remove from my account on its card, then run ${command} again.\n`);
     return 1;
   }
   // a terminal that went away takes no write: what is owed to this PC (its listing) comes first, then a word that may fail
@@ -1867,7 +1869,7 @@ async function addByPress(options: LinkOptions, api: Api, press: Pressing): Prom
         if (ended !== null) return ended;
       }
     }
-    tell(`Nobody pressed Add for ${name} within 10 minutes of its listing. ${left(off, `On a device of your account, choose Remove from my account on its card, then run ${command} again.`, account === null)}\n`);
+    tell(`Nobody pressed Add for ${name} within 10 minutes of its listing. ${left(off, `On a device of your account, choose No or Remove from my account on its card, then run ${command} again.`, account === null)}\n`);
     return 1;
   } catch (error) {
     if (!signal.aborted && !(error instanceof LocalError || error instanceof AwayError)) throw error;

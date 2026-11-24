@@ -4,6 +4,7 @@ import { tmpdir } from "node:os";
 import { join } from "node:path";
 
 import { FakeAccountService } from "../shared/account-service-fake.ts";
+import { accountOsOfPlatform } from "../shared/account-asker.ts";
 import { generateKeyPair, importPublicKey } from "../shared/relay-e2ee.ts";
 import { deriveServerId } from "../shared/relay-server-proof.ts";
 import { encodeOffer } from "../shared/relay-offer.ts";
@@ -1774,6 +1775,18 @@ describe("ovis link, on the PC itself", () => {
     expect(run.signedOut).toBe(true);
   });
 
+  it("lists this PC with the system it runs, which the card on a device of the account shows while it asks", async () => {
+    let fake: FakeAccountService | undefined;
+    const seen: unknown[] = [];
+    const run = await pressing({
+      pressAfter: 1,
+      prepare: (service) => { fake = service; },
+      answer: (asks) => { if (asks === 1) seen.push(...fake!.pcs("acct_1").map((entry) => entry.asking?.os)); return undefined; },
+    });
+    expect(run.code).toBe(0);
+    expect(seen).toEqual([accountOsOfPlatform(process.platform)]);
+  });
+
   it("lists nothing, and asks this PC nothing, unless yes is typed at the account it names", async () => {
     for (const answer of ["y", "", "no", "yes please"]) {
       const run = await pressing({ confirm: answer });
@@ -1867,8 +1880,10 @@ describe("ovis link, on the PC itself", () => {
     expect(lost.code).toBe(0);
     expect(lost.text).not.toContain("Nobody pressed Add");
     expect(lost.text.endsWith(FINISHED)).toBe(true);
-    // an Add as the time ran out kept the listing; the ask after it found this PC in the account (another window took it)
-    const joined = await pressing({ pressAfter: 101, answer: (asks, state) => {
+    // an Add as the time ran out kept the listing; the ask after it found this PC in the account (another window took it).
+    // An account service since its listings ask for ten minutes from their sign-in refuses an Add that late (listing_expired):
+    // this is the one from before, which still admits it
+    const joined = await pressing({ pressAfter: 101, prepare: (service) => { service.pcAddProofs = false; }, answer: (asks, state) => {
       if (asks !== 102) return undefined;
       state.account = "acct_1";
       return Response.json({ error: { code: "in_account", message: "This PC is already in an account" } }, { status: 409 });
@@ -1887,7 +1902,8 @@ describe("ovis link, on the PC itself", () => {
   });
 
   it("takes the admission of an Add pressed as the ten minutes ran out, rather than calling it not added", async () => {
-    const run = await pressing({ pressAfter: 101 });
+    // an account service from before its listings asked for ten minutes from their sign-in: one since refuses an Add that late
+    const run = await pressing({ pressAfter: 101, prepare: (service) => { service.pcAddProofs = false; } });
     expect(run.code).toBe(0);
     expect(run.pressed).toHaveLength(102);
     expect(run.text).not.toContain("Nobody pressed Add");
@@ -1936,7 +1952,7 @@ describe("ovis link, on the PC itself", () => {
     const [, minutes, seconds] = /Waiting… \(up to (\d+):(\d\d), Ctrl\+C to stop\)/.exec(run.text) ?? [];
     expect(Number(minutes)).toBe(5);
     expect(run.askedAt.at(-1)! - run.askedAt[0]!).toBe((5 * 60 + Number(seconds)) * 1000);
-    expect(run.text).toContain("Nobody pressed Add for old-desktop within 10 minutes of its listing. This PC is in no account yet, but your account still lists it. On a device of your account, choose Remove from my account on its card, then run ovis add again.\n");
+    expect(run.text).toContain("Nobody pressed Add for old-desktop within 10 minutes of its listing. This PC is in no account yet, but your account still lists it. On a device of your account, choose No or Remove from my account on its card, then run ovis add again.\n");
     expect(run.listed()).toHaveLength(1);
   });
 
@@ -1944,7 +1960,7 @@ describe("ovis link, on the PC itself", () => {
     const run = await pressing({ prepare: listedEarlier(11 * 60_000) });
     expect(run.code).toBe(1);
     expect(run.pressed).toEqual([]);
-    expect(run.text).toContain("more than 10 minutes ago, so your devices no longer offer Add for it. On a device of your account, choose Remove from my account on its card, then run ovis add again.\n");
+    expect(run.text).toContain("more than 10 minutes ago, so your devices no longer offer Add for it. On a device of your account, choose No or Remove from my account on its card, then run ovis add again.\n");
     expect(run.text).not.toContain("2/2");
   });
 

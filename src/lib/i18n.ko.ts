@@ -255,6 +255,8 @@ const BASE: Record<string, string> = {
   "Add it only if you started adding that PC yourself and entered the code it showed. If someone else gave you the code, or you did not start this, press No.": "방금 그 PC를 직접 추가하기 시작했고 그 PC에 나온 코드를 입력했을 때만 추가하세요. 다른 사람이 코드를 줬거나 직접 시작하지 않았다면 아니요를 누르세요.",
   "Add|account pc": "추가",
   "No|account pc": "아니요",
+  "Expires in {minutes} min": "{minutes}분 후 만료",
+  "This request ran out. To add this PC, start again on the PC.": "요청 시간이 지났어요. 추가하려면 그 PC에서 다시 시작하세요.",
   "{name} was added to your account before this phone joined. Did you add it?": "{name}가 이 폰이 들어오기 전에 계정에 추가됐어요. 직접 추가하셨나요?",
   "{name} was added to your account before this device joined. Did you add it?": "{name}가 이 기기가 들어오기 전에 계정에 추가됐어요. 직접 추가하셨나요?",
   "Yes|account pc": "네",

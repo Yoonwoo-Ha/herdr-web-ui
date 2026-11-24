@@ -5,12 +5,13 @@
  * service would refuse.
  */
 import {
-  ACCOUNT_RECORDS_MAX, AccountRecordError, isAccountKeyEncoding, isDeviceSafetyRecord, parseSafetyRecord, readAccountRecord, verifySafetyRecord,
-  type AccountRecord, type BlockRecord, type DeviceLiftRecord, type SafetyRecord,
+  ACCOUNT_RECORDS_MAX, AccountRecordError, isAccountKeyEncoding, isDeviceSafetyRecord, parseSafetyRecord, pcAddSigningBytes, readAccountRecord, verifySafetyRecord,
+  type AccountRecord, type BlockRecord, type DeviceLiftRecord, type PcAddPurpose, type SafetyRecord,
 } from "./account-records.ts";
 import { ACCOUNT_SNAPSHOT_V, SNAPSHOT_GONE, type AccountSnapshotPage, type SnapshotFreezeLine } from "./account-snapshot.ts";
 import { accountOsOf, type AccountOs, type AccountPlace } from "./account-asker.ts";
 import { isWssOrigin } from "./relay-offer.ts";
+import { fromBase64Url, toBase64Url } from "./relay-pair-sas.ts";
 import { deriveServerId, proofKey, serverChallenge, verifyServerProof } from "./relay-server-proof.ts";
 
 export const CHALLENGE_TTL_MS = 60_000;
@@ -89,7 +90,17 @@ export interface FakePc { server_id: string; label: string; public_key: string; 
   listing_id?: string;
   /** the PC completed its add (the service's `completed_at`; with `completions`, POST /v1/pc/complete), and a device was admitted to it by its digits (`digit_admitted`) */
   completed_at?: string | null;
-  digit_admitted?: boolean }
+  digit_admitted?: boolean;
+  /**
+   * With `pcAddProofs`, on a listing a device code made under Step 2: when that sign-in was made, which starts the listing's
+   * LISTING_ASKS_MS, and who asked (the system its PUT named and the place the service saw it come from)
+   */
+  asking_since?: number;
+  asking?: { os: AccountOs | null; country: string | null; city: string | null } }
+/** How long a listing that asks to join may be let in, from the device-code sign-in that made it; past it 409 `listing_expired`. */
+export const LISTING_ASKS_MS = 10 * 60_000;
+/** How long a key proof's challenge (POST /v1/pcs/challenge) is good for. */
+export const PC_ADD_CHALLENGE_TTL_MS = 2 * 60_000;
 /** How long a PC added in one press stays new to the account's other devices. */
 export const PC_NEW_MS = 24 * 60 * 60_000;
 /** One-press PC adds one account may make per rolling day; past it 429 `pc_add_cap`. */
@@ -186,6 +197,23 @@ export class FakeAccountService {
    * 2026-11-23. Off, the service since: such an admit is logged as exempt instead.
    */
   admitAsksTwoStep = false;
+  /**
+   * The service since it takes key proofs: an own sign-in older than REAUTH_MS adds a PC (the admit, a confirm, and where
+   * Step 2 is on a PUT that lists a PC the account does not list yet) only with a proof by the key registered for that very
+   * sign-in, over a challenge of POST /v1/pcs/challenge; any own sign-in declines a listing that asks to join; such a listing
+   * says who is asking and is let in only within LISTING_ASKS_MS (409 `listing_expired`). Off, the service before: no
+   * challenge route (404), an admit's body that is not `{}` is 400 `invalid_request`, a PUT ignores `key_proof`, and the
+   * admit, a confirm and a Decline all ask for a sign-in from the last ten minutes.
+   */
+  pcAddProofs = true;
+  /**
+   * With `pcAddProofs`, the service's switch for its list rule: on, an old own sign-in's PUT of a PC the account does not list yet is
+   * refused `session_not_fresh` without a key proof. Off (as the service ships at first), such a PUT lists the PC as before;
+   * a proof that is sent is judged all the same.
+   */
+  listProofRequired = true;
+  /** POST /v1/pcs/challenge's challenges, by id: for one sign-in (family), spent by their first use */
+  private readonly pcAddChallenges = new Map<string, { family: string; challenge: string; expires: number }>();
   private seq = 0;
   readonly requests: string[] = [];
 
@@ -429,6 +457,57 @@ export class FakeAccountService {
     return !this.opensAll || row.listed_by_device !== true || row.pending_under_step2 !== true;
   }
 
+  /**
+   * With `pcAddProofs`, a listing that asks to join: one a device code made while Step 2 was on, never confirmed, admitted
+   * (by one press, a confirm or digits) or completed. Ending one cuts nobody off, so any own sign-in may.
+   */
+  private askingToJoin(row: FakePc): boolean {
+    return this.pcAddProofs && this.opensAll && row.listed_by_device === true && row.pending_under_step2 === true && row.admitted_at == null && row.completed_at == null && row.digit_admitted !== true;
+  }
+
+  /** Such a listing past its LISTING_ASKS_MS, counted from the sign-in that made it (else from its own listing). */
+  private askingExpired(row: FakePc): boolean {
+    return this.askingToJoin(row) && this.now() - (row.asking_since ?? Date.parse(row.added_at)) > LISTING_ASKS_MS;
+  }
+
+  /** Who is asking, on an unconfirmed PC, as GET and PUT /v1/pcs give it with `pcAddProofs`. */
+  private askingView(row: FakePc): Record<string, unknown> {
+    if (!this.pcAddProofs || !this.opensAll || row.listed_by_device !== true) return {};
+    return {
+      asking_os: row.asking?.os ?? null, asking_country: row.asking?.country ?? null, asking_city: row.asking?.city ?? null,
+      asking_until: this.askingToJoin(row) ? new Date((row.asking_since ?? Date.parse(row.added_at)) + LISTING_ASKS_MS).toISOString() : null,
+    };
+  }
+
+  /**
+   * The key `proof` proves for an add by `session`, as the service's: null without a proof, or when its signature is not by
+   * the key that very sign-in registered (not removed, not frozen), over this purpose, account, PC, listing and challenge.
+   * A Response for a malformed proof (400 `invalid_request`), or a challenge that is unknown, spent, past its two minutes or
+   * another sign-in's (400 `challenge_invalid`); the challenge is spent whatever comes of it.
+   */
+  private async provedKey(session: Session, proof: unknown, purpose: PcAddPurpose, serverId: string, listingId: string): Promise<string | null | Response> {
+    if (proof === undefined) return null;
+    const shaped = keyProofOf(proof);
+    if (shaped === null) return problem(400, "invalid_request", "Send key_proof as { challenge_id, signature }");
+    const { challenge_id: id, signature } = shaped;
+    const held = this.pcAddChallenges.get(id);
+    if (held?.family === session.family) this.pcAddChallenges.delete(id);
+    if (held === undefined || held.family !== session.family || this.now() > held.expires) return problem(400, "challenge_invalid", "Ask for a new challenge and sign it");
+    const registry = this.registries.get(session.account);
+    const key = [...this.keyFamily].find(([each, family]) => {
+      const device = registry?.devices.get(each);
+      return family === session.family && device !== undefined && !device.removed && !this.frozen(registry!, device.no);
+    })?.[0];
+    if (key === undefined) return null;
+    try {
+      const publicKey = await crypto.subtle.importKey("spki", new Uint8Array(fromBase64Url(key)), { name: "ECDSA", namedCurve: "P-256" }, false, ["verify"]);
+      const bytes = pcAddSigningBytes(purpose, session.account, serverId, listingId, id, held.challenge);
+      return await crypto.subtle.verify({ name: "ECDSA", hash: "SHA-256" }, publicKey, new Uint8Array(fromBase64Url(signature)), bytes) ? key : null;
+    } catch {
+      return null;
+    }
+  }
+
   private everUsed(account: string, serverId: string, family: string, kind: "admit" | "confirm"): boolean {
     const rows = [...(this.directories.get(account)?.values() ?? [])];
     const pending = (row: FakePc): boolean => row.pending_under_step2 === true && row.listed_by_device === true && row.admitted_at == null;
@@ -614,20 +693,44 @@ export class FakeAccountService {
       const unconfirmed = new URL(request.url).searchParams.get("include") === "unconfirmed";
       // null while step 2 is off for the account, and once passed
       const keyAt = this.keyRegisteredAt.get(session.family);
-      return json({ pcs: [...directory.values()].filter((entry) => unconfirmed || !this.opensAll || entry.listed_by_device !== true).map(({ exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, ...entry }) => ({
-        ...entry,
-        unconfirmed: this.opensAll && listed_by_device === true,
-        new_until: this.opensAll && entry.new_until != null && Date.parse(entry.new_until) > this.now() ? entry.new_until : null,
-        admitted_at: this.opensAll ? entry.admitted_at ?? null : null,
-        // the one admit no device was told about: shown to a device whose own key came after it
-        admitted_before_you: this.opensAll && exempt === true && keyAt !== undefined && entry.admitted_at != null && Date.parse(entry.admitted_at) < keyAt,
-      })) });
+      return json({ pcs: [...directory.values()].filter((entry) => unconfirmed || !this.opensAll || entry.listed_by_device !== true).map((row) => {
+        const { exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, asking_since: _since, asking: _asking, ...entry } = row;
+        return {
+          ...entry,
+          unconfirmed: this.opensAll && listed_by_device === true,
+          ...this.askingView(row),
+          new_until: this.opensAll && entry.new_until != null && Date.parse(entry.new_until) > this.now() ? entry.new_until : null,
+          admitted_at: this.opensAll ? entry.admitted_at ?? null : null,
+          // the one admit no device was told about: shown to a device whose own key came after it
+          admitted_before_you: this.opensAll && exempt === true && keyAt !== undefined && entry.admitted_at != null && Date.parse(entry.admitted_at) < keyAt,
+        };
+      }) });
+    }
+    if (path === "/v1/pcs/challenge" && request.method === "POST" && this.pcAddProofs && this.opensAll) {
+      // a challenge for one key proof (pcAddSigningBytes), for an app's own sign-in only, spent by its first use
+      if (this.deviceFamilies.has(session.family)) return problem(403, "own_sign_in_required", "Sign in on this device first");
+      const text = await request.text();
+      const body: unknown = text.trim() === "" ? {} : JSON.parse(text);
+      if (typeof body !== "object" || body === null || Object.keys(body).length > 0) return problem(400, "invalid_request", "Send {}");
+      const id = randomHex(16);
+      const challenge = toBase64Url(crypto.getRandomValues(new Uint8Array(32)));
+      this.pcAddChallenges.set(id, { family: session.family, challenge, expires: this.now() + PC_ADD_CHALLENGE_TTL_MS });
+      return json({ challenge_id: id, challenge, expires_in: PC_ADD_CHALLENGE_TTL_MS / 1000 });
     }
     const admitted = /^\/v1\/pcs\/([0-9a-f]{32})\/admit$/.exec(path)?.[1];
     if (admitted !== undefined && request.method === "POST" && this.opensAll) {
-      // C1: an app's own sign-in, made within REAUTH_MS, with two-step sign-in set (unknown is not enough)
+      // the body is `{}`, or with `pcAddProofs` `{ key_proof }`: anything else is refused before the sign-in is looked at
+      const text = await request.text();
+      const body = (text.trim() === "" ? {} : JSON.parse(text)) as Record<string, unknown>;
+      if (typeof body !== "object" || body === null || Object.keys(body).some((name) => !(this.pcAddProofs && name === "key_proof"))) return problem(400, "invalid_request", "Send {} or { key_proof }");
+      // C1: an app's own sign-in, made within REAUTH_MS, or older with a proof by its own key for this PC's current listing
       if (this.deviceFamilies.has(session.family)) return problem(403, "own_sign_in_required", "Sign in in the app itself");
-      if (this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) > REAUTH_MS) return problem(403, "session_not_fresh", "Sign in again on this device first");
+      const signed = directory.get(admitted)?.listing_id ?? "";
+      const proved = await this.provedKey(session, body.key_proof, "admit", admitted, signed);
+      if (proved instanceof Response) return proved;
+      if (!recent && proved === null) return problem(403, "session_not_fresh", "Sign in again on this device first");
+      // as the service binds the signed listing into its write: one replaced while the proof was checked is not admitted
+      if (proved !== null && (directory.get(admitted)?.listing_id ?? "") !== signed) return problem(409, "listing_changed", "This add is no longer waiting for that action");
       // the first-PC exemption: an account never used (no other PC, no admit or removal, no device key ever) waives two-step
       const exempt = this.twoStep.get(session.family) !== true;
       const entry = directory.get(admitted);
@@ -636,6 +739,7 @@ export class FakeAccountService {
       const retry = entry !== undefined && open !== undefined && !open.taken && open.family === session.family && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null;
       if (this.admitAsksTwoStep && exempt && !retry && this.everUsed(account, admitted, session.family, "admit")) return problem(403, "two_step_required", "Set up two-step sign-in first");
       if (entry === undefined) return problem(400, "unknown_pc", "List PCs of this account only");
+      if (this.askingExpired(entry)) return problem(409, "listing_expired", "This PC asked to join more than ten minutes ago; start adding it again on the PC");
       if (open !== undefined && !open.taken && this.now() - open.at <= ADMISSION_TTL_MS && entry.new_until != null) {
         return json({ server_id: admitted, account, admitted_at: new Date(open.at).toISOString(), new_until: entry.new_until });
       }
@@ -660,7 +764,7 @@ export class FakeAccountService {
     }
     const pc = /^\/v1\/pcs\/([0-9a-f]{32})$/.exec(path)?.[1];
     if (pc !== undefined && request.method === "PUT") {
-      const body = await request.json() as { label?: unknown; public_key?: unknown; relay?: unknown; confirm?: unknown; listing_id?: unknown; challenge_id?: unknown; proof?: unknown };
+      const body = await request.json() as { label?: unknown; public_key?: unknown; relay?: unknown; confirm?: unknown; listing_id?: unknown; challenge_id?: unknown; proof?: unknown; key_proof?: unknown; os?: unknown };
       // PCL-1: only an app's own sign-in may say "this is my PC"; a device code can be typed for someone else's PC
       const own = !this.deviceFamilies.has(session.family);
       const confirm = body.confirm === true;
@@ -676,10 +780,24 @@ export class FakeAccountService {
       // the PC's own proof of this server_id, sent beside the entry when the PC itself lists it: it lists it again after its leave
       const proven = body.challenge_id !== undefined || body.proof !== undefined;
       if (proven && !this.takeProof({ server_id: pc, challenge_id: body.challenge_id, proof: body.proof })) return problem(401, "proof_invalid", "Ask for a new challenge and answer it");
-      // PCL-4: a confirm asks what the one-press admit asks of the sign-in: fresh, and two-step set unless the account was never used
+      // with `pcAddProofs` an own sign-in adds a PC only from the last ten minutes, or older with a proof by its own key: a
+      // confirm, and where Step 2 is on a PUT that lists a PC the account does not list yet. Upkeep of a listed PC and a device
+      // code's listing ask nothing of the sign-in, and read no proof. The service before ignores `key_proof`
+      if (this.pcAddProofs && body.key_proof !== undefined && keyProofOf(body.key_proof) === null) return problem(400, "invalid_request", "Send key_proof as { challenge_id, signature }");
+      if (this.pcAddProofs && own && (confirm || (this.opensAll && !directory.has(pc)))) {
+        const listing = named ? body.listing_id as string : directory.get(pc)?.listing_id ?? "";
+        const proved = await this.provedKey(session, body.key_proof, confirm ? "confirm" : "list", pc, listing);
+        if (proved instanceof Response) return proved;
+        const enforced = confirm || this.listProofRequired || body.key_proof !== undefined;
+        if (!recent && proved === null && enforced) return problem(403, "session_not_fresh", "Sign in again on this device first");
+      }
+      // PCL-4: a confirm asks what the one-press admit asks of the sign-in: fresh (or proved, above), and two-step set unless the
+      // account was never used; and a listing that asks to join is confirmed only within its ten minutes
       if (confirm) {
-        if (this.now() - (this.signedInAt.get(session.family) ?? Number.NEGATIVE_INFINITY) > REAUTH_MS) return problem(403, "session_not_fresh", "Sign in again on this device first");
+        if (!this.pcAddProofs && !recent) return problem(403, "session_not_fresh", "Sign in again on this device first");
         if (this.twoStep.get(session.family) !== true && this.everUsed(account, pc, session.family, "confirm")) return problem(403, "two_step_required", "Two-step sign-in must be on for one press; add this PC with the number");
+        const listed = directory.get(pc);
+        if (listed !== undefined && this.askingExpired(listed)) return problem(409, "listing_expired", "This PC asked to join more than ten minutes ago; start adding it again on the PC");
       }
       const fresh = !directory.has(pc);
       const leftAt = this.pcLeaves.get(box(pc, account));
@@ -699,7 +817,11 @@ export class FakeAccountService {
         listed_by_device: before === undefined ? !own : before.listed_by_device === true && !confirming,
         pending_under_step2: before === undefined ? !own && this.opensAll : before.pending_under_step2 === true,
         ...(before === undefined ? { listed_by_session: session.family } : before.listed_by_session === undefined ? {} : { listed_by_session: before.listed_by_session }),
-        ...(this.completions ? { listing_id: before?.listing_id ?? randomHex(16), completed_at: before?.completed_at ?? null } : {}) };
+        ...(this.completions ? { listing_id: before?.listing_id ?? randomHex(16), completed_at: before?.completed_at ?? null } : {}),
+        // a listing that asks to join keeps, from its own listing on, when its sign-in was made and who asked; a confirm clears who
+        ...(before === undefined
+          ? !own && this.opensAll && this.pcAddProofs ? { asking_since: this.signedInAt.get(session.family) ?? this.now(), asking: { os: accountOsOf(body.os), ...this.requestPlace } } : {}
+          : { ...(before.asking_since === undefined ? {} : { asking_since: before.asking_since }), ...(before.asking === undefined || confirming ? {} : { asking: before.asking }) }) };
       // a confirm makes the PC one the account's devices open, as the admit does: new to them for PC_NEW_MS (C3). It
       // writes no admission: the row it confirms is what makes the account used from then on
       if (confirming) {
@@ -709,8 +831,8 @@ export class FakeAccountService {
       directory.set(pc, entry);
       if (proven) this.pcLeaves.delete(box(pc, account));
       if (fresh || confirming) this.ring(account, session.family);
-      const { exempt: _exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, ...shown } = entry;
-      return json({ pc: { ...shown, unconfirmed: this.opensAll && listed_by_device === true } });
+      const { exempt: _exempt, listed_by_device, pending_under_step2: _pending, listed_by_session: _lister, digit_admitted: _digits, asking_since: _since, asking: _asking, ...shown } = entry;
+      return json({ pc: { ...shown, unconfirmed: this.opensAll && listed_by_device === true, ...this.askingView(entry) } });
     }
     if (pc !== undefined && request.method === "DELETE") {
       // account#67: a Decline names the listing its card showed; after the sign-in checks, it removes only that listing while
@@ -735,7 +857,9 @@ export class FakeAccountService {
         if (this.member(own)) this.usedAccounts.add(account);
         return new Response(null, { status: 204 });
       }
-      if (!recent) return problem(403, "reauth_required", "Sign in again first");
+      // with `pcAddProofs` an own sign-in of any age ends a listing that still asks to join: it cuts nobody off, so saying No
+      // is never harder than Add
+      if (!recent && !(listed !== undefined && this.askingToJoin(listed))) return problem(403, "reauth_required", "Sign in again first");
       if (changed) return problem(409, "listing_changed", "This PC no longer asks to join by that listing");
       const removed = directory.get(pc);
       directory.delete(pc);
@@ -1005,6 +1129,14 @@ function json(body: unknown, status = 200): Response {
 
 function problem(status: number, code: string, message: string): Response {
   return json({ error: { code, message } }, status);
+}
+
+/** `key_proof` as the service reads it: `{ challenge_id, signature }`, 32 lowercase hex digits and 86 base64url characters; null otherwise. */
+function keyProofOf(value: unknown): { challenge_id: string; signature: string } | null {
+  if (value === null || typeof value !== "object" || Object.keys(value).length !== 2) return null;
+  const { challenge_id, signature } = value as Record<string, unknown>;
+  return typeof challenge_id === "string" && /^[0-9a-f]{32}$/.test(challenge_id) && typeof signature === "string" && /^[A-Za-z0-9_-]{86}$/.test(signature)
+    ? { challenge_id, signature } : null;
 }
 
 function randomHex(bytes: number): string {

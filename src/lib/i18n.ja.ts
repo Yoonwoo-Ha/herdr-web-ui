@@ -257,6 +257,8 @@ const BASE: Record<string, string> = {
   "Add it only if you started adding that PC yourself and entered the code it showed. If someone else gave you the code, or you did not start this, press No.": "その PC の追加を自分で始めて、その PC に表示されたコードを入力した場合だけ追加してください。ほかの人からコードを渡された場合や、自分で始めていない場合は「いいえ」を押してください。",
   "Add|account pc": "追加",
   "No|account pc": "いいえ",
+  "Expires in {minutes} min": "あと {minutes} 分で期限切れ",
+  "This request ran out. To add this PC, start again on the PC.": "リクエストの期限が切れました。追加するには、その PC でもう一度始めてください。",
   "{name} was added to your account before this phone joined. Did you add it?": "{name}は、このスマホが加わる前にアカウントに追加されました。ご自身で追加しましたか？",
   "{name} was added to your account before this device joined. Did you add it?": "{name}は、このデバイスが加わる前にアカウントに追加されました。ご自身で追加しましたか？",
   "Yes|account pc": "はい",

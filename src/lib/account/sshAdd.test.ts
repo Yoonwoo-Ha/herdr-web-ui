@@ -155,6 +155,36 @@ describe("adding another PC to the account over SSH, from this PC's own window",
   });
 });
 
+describe("adding another PC over SSH, on the account service since key proofs", () => {
+  /** this PC's own window, signed in `age` ago; it registers no key of its own (only the phone app and app.ovis.sh do) */
+  async function signedIn(age: number) {
+    let now = Date.now();
+    const fake = new FakeAccountService(() => now);
+    fake.opensAll = true;
+    const store = memoryAccountStore();
+    const token = fake.issueToken(ACCOUNT, { twoStep: true });
+    await store.set("session", { service: SERVICE, account: ACCOUNT, provider: "google", access_token: token, refresh_token: "r", expires_at: now + 365 * 86_400_000, sign_in_id: "here", signed_in_at: now });
+    now += age;
+    const service = new AccountService({ store, fetch: fake.fetch, now: () => now });
+    const takes: string[] = [];
+    const take = async (jobId: string, serverId: string): Promise<SshTake> => { takes.push(`${jobId} ${serverId}`); return ONLINE; };
+    return { fake, service, takes, take, challenges: () => fake.requests.filter((line) => line === "POST /v1/pcs/challenge").length };
+  }
+
+  it("a fresh sign-in adds as before, proving nothing", async () => {
+    const { service, take, challenges } = await signedIn(0);
+    expect(await addOverSsh(service, { id: "job-1", account_add: pcFields() }, { account: ACCOUNT, running: () => true, take })).toBe("added");
+    expect(challenges()).toBe(0);
+  });
+
+  it("a sign-in days old asks to sign in again, and nothing is handed over", async () => {
+    const { fake, service, take, takes } = await signedIn(3 * 86_400_000);
+    expect(await addOverSsh(service, { id: "job-1", account_add: pcFields() }, { account: ACCOUNT, running: () => true, take })).toBe("sign-in-again");
+    expect(fake.pcs(ACCOUNT)).toEqual([]);
+    expect(takes).toEqual([]);
+  });
+});
+
 describe("where Add a connection's relay tab lists the PCs to add over SSH", () => {
   const mine = { pcAddFromAccount: true as const, signedInAccount: "acct_a", pcAccount: "acct_a" };
   it("is this PC's own window only, signed in to the account this PC is in, with the account's rules on", () => {

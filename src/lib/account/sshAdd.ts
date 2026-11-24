@@ -108,7 +108,7 @@ export async function addOverSsh(service: AccountService, job: { readonly id: st
   try {
     const listed = (await directory.listPcs()).some((pc) => pc.server_id === target.server_id);
     if (!options.running()) return "refused";
-    if (!listed) await directory.putPc(target.server_id, { label: target.label, public_key: hex(target.public_key), relay: target.relay });
+    if (!listed) await directory.putPc(target.server_id, { label: target.label, public_key: hex(target.public_key), relay: target.relay }, undefined, undefined, { prove: true });
     if (!options.running()) return "refused";
     await directory.admitPc(target.server_id);
   } catch (error) {

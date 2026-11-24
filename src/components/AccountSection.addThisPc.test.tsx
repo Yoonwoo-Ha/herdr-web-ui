@@ -403,6 +403,41 @@ describe("AddThisPc", () => {
       expect(buttons(renderer)).toEqual(["Stop waiting"]);
     });
 
+    test("a listing refused for an old sign-in with no key offers Sign in again here, then lists and adds with the fresh one", async () => {
+      putRefusal = new AccountServiceError(403, "session_not_fresh", "Sign in again on this device first");
+      let renderer!: ReactTestRenderer;
+      act(() => { renderer = create(createElement(SettingsProvider, { children: createElement(AddThisPc, { service: unbound, signedInHere: () => null, opensAll: () => onePress.opensAll, signInAgain }) })); });
+      renderers.push(renderer);
+      await settle();
+      await press(renderer, "Add this PC to my account");
+      expect(words(renderer)).toContain("Sign in again to add it: your sign-in is more than ten minutes old.");
+      expect(words(renderer)).not.toContain("This PC could not be listed in your account. Try again.");
+      expect(buttons(renderer)).toEqual(["Sign in again"]);
+      expect(admitted).toEqual([]);
+      // the fresh sign-in lists the PC, and its one press adds it
+      putRefusal = null;
+      await press(renderer, "Sign in again");
+      expect(calls.map((call) => call.account)).toEqual([ACCOUNT]);
+      expect(installs).toBe(1);
+      expect(puts).toEqual([`${ACCOUNT}/${SERVER}`, `${ACCOUNT}/${SERVER}`]);
+      expect(admitted).toEqual([ACCOUNT]);
+      expect(words(renderer)).toContain("Added");
+    });
+
+    test("a Sign in again for a refused listing that does not finish says so and offers it again", async () => {
+      putRefusal = new AccountServiceError(403, "session_not_fresh", "Sign in again on this device first");
+      comes = "fail";
+      let renderer!: ReactTestRenderer;
+      act(() => { renderer = create(createElement(SettingsProvider, { children: createElement(AddThisPc, { service: unbound, signedInHere: () => null, opensAll: () => onePress.opensAll, signInAgain }) })); });
+      renderers.push(renderer);
+      await settle();
+      await press(renderer, "Add this PC to my account");
+      await press(renderer, "Sign in again");
+      expect(words(renderer)).toContain("The sign-in did not finish. Try again.");
+      expect(buttons(renderer)).toEqual(["Sign in again"]);
+      expect(puts).toEqual([`${ACCOUNT}/${SERVER}`]);
+    });
+
     test("a one press refused for the sign-in itself offers to sign in again, beside Stop waiting", async () => {
       const renderer = await waitingWithOffer();
       expect(words(renderer)).toContain(WAIT);
@@ -1293,6 +1328,16 @@ describe("AddThisPc", () => {
     await settle();
     expect(puts).toEqual([`${ACCOUNT}/${SERVER}`]);
     expect(words(renderer)).toContain("Sign in on this PC to add it again");
+    expect(words(renderer)).not.toContain("This PC could not be listed in your account. Try again.");
+    expect(tab.has(MARKER)).toBe(false);
+  });
+
+  test("a listing the account service refuses for an old sign-in with no key to prove says to sign in again, not to try again", async () => {
+    putRefusal = new AccountServiceError(403, "session_not_fresh", "Sign in again on this device first");
+    const renderer = await mount(ACCOUNT);
+    await settle();
+    expect(puts).toEqual([`${ACCOUNT}/${SERVER}`]);
+    expect(words(renderer)).toContain("Sign in again to add it: your sign-in is more than ten minutes old.");
     expect(words(renderer)).not.toContain("This PC could not be listed in your account. Try again.");
     expect(tab.has(MARKER)).toBe(false);
   });

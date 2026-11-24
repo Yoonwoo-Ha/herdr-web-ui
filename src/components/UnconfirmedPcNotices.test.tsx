@@ -7,8 +7,9 @@ import { deriveServerId } from "../../shared/relay-server-proof.ts";
 import { isNewAccountPc, type MyPc } from "../lib/account/myPcs.ts";
 import { newPcNoticeKey } from "../lib/account/newPcNotice.ts";
 import { AccountService } from "../lib/account/service.ts";
+import type { AccountOs } from "../../shared/account-asker.ts";
 import { beginSignIn, finishSignIn, signInReturn } from "../lib/account/signin.ts";
-import { memoryAccountStore, memoryLock, type AccountProvider, type AccountStore } from "../lib/account/store.ts";
+import { memoryAccountStore, memoryLock, newKey, type AccountProvider, type AccountStore } from "../lib/account/store.ts";
 import { accountOpenablePcs } from "../lib/relay/pcPick.ts";
 import { SettingsProvider } from "../lib/settings.ts";
 import { keepShellAccount } from "../lib/account/hostedSignIn.ts";
@@ -44,21 +45,31 @@ const admits = (): number => fake.requests.filter((line) => line === `POST /v1/p
 
 async function signIn(provider: AccountProvider = "github"): Promise<void> {
   fake.signInAs(provider, ACCOUNT);
-  const start = await beginSignIn(provider, { store, service: ORIGIN, redirectUri: WEB_REDIRECT });
+  const start = await beginSignIn(provider, { store, service: ORIGIN, redirectUri: WEB_REDIRECT, now: () => now });
   const returned = signInReturn(new URL((await fake.fetch(start)).headers.get("location") ?? "").hash);
   if (returned === null) throw new Error("no sign-in came back");
-  await finishSignIn(returned, { store, fetch: fake.fetch });
+  await finishSignIn(returned, { store, fetch: fake.fetch, now: () => now });
 }
 
-/** a PC types its device code into the owner's account and lists itself: unconfirmed (PCL-1) */
-async function listedByDeviceCode(): Promise<void> {
+/** the key this sign-in registered with the account service, kept as signInKey.ts keeps it */
+async function registerKey(): Promise<void> {
+  const session = (await store.get("session"))!;
+  const made = await newKey();
+  const no = fake.registerSessionKey(session.access_token, made.public_spki, "Phone");
+  await store.set("signin_key", { account: ACCOUNT, sign_in_id: session.sign_in_id!, key: made, no });
+}
+
+/** a PC types its device code into the owner's account and lists itself: unconfirmed (PCL-1), naming its system when `os` is given */
+async function listedByDeviceCode(os?: AccountOs): Promise<void> {
   const token = fake.issueToken(ACCOUNT, { device: true });
   const response = await fake.fetch(`${ORIGIN}/v1/pcs/${PC}`, {
     method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
-    body: JSON.stringify({ label: LABEL, public_key: Buffer.from(key).toString("hex"), relay: "wss://relay.ovis.sh" }),
+    body: JSON.stringify({ label: LABEL, public_key: Buffer.from(key).toString("hex"), relay: "wss://relay.ovis.sh", ...(os === undefined ? {} : { os }) }),
   });
   expect(response.ok).toBe(true);
 }
+
+const challenges = (): number => fake.requests.filter((line) => line === "POST /v1/pcs/challenge").length;
 
 /** another PC the account already has, listed by an own sign-in: the account is no longer never-used */
 async function listedByItsOwnSignIn(): Promise<void> {
@@ -128,19 +139,183 @@ describe("a PC the account lists unconfirmed", () => {
     expect(buttons()).toEqual(["Add", "No"]);
   });
 
-  it("offers only Remove from my account once the listing is older than ten minutes", async () => {
+  it("says the request ran out once the listing is older than ten minutes, and offers only No, which removes it", async () => {
     await listedByDeviceCode();
     now += 11 * MINUTE;
     await signIn();
     await mount();
     expect(text()).toContain(`Name the PC gave itself: "${LABEL}"`);
-    expect(buttons()).toEqual(["Remove from my account"]);
-    await press("Remove from my account");
+    expect(text()).toContain("This request ran out. To add this PC, start again on the PC.");
+    expect(text()).not.toContain("Add this PC to your account?");
+    expect(buttons()).toEqual(["No"]);
+    await press("No");
     expect(fake.requests).toContain(`DELETE /v1/pcs/${PC}`);
     expect(fake.pcs(ACCOUNT)).toEqual([]);
   });
 
-it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and says to sign in again", async () => {
+  it("says who is asking under the PC's name, the system and the place the account service saw, and the time left", async () => {
+    fake.requestPlace = { country: "KR", city: "Seoul" };
+    await signIn();
+    await listedByDeviceCode("linux");
+    now += 3 * MINUTE + 10_000;
+    await mount();
+    expect(text()).toContain(`Name the PC gave itself: "${LABEL}"Linux · Seoul, South Korea`);
+    expect(text()).toContain("Expires in 7 min");
+    expect(buttons()).toEqual(["Add", "No"]);
+  });
+
+  it("names only what the account service knows of who is asking, and nothing when it knows nothing", async () => {
+    await signIn();
+    await listedByDeviceCode("macos");
+    await mount();
+    expect(text()).toContain(`"${LABEL}"macOS`);
+    expect(text()).not.toContain("macOS ·");
+    fake.pcAddProofs = false;
+    await mount();
+    expect(text()).not.toContain("macOS");
+    expect(text()).not.toContain("Expires in");
+  });
+
+  for (const [what, setUp] of [
+    ["one a sign-in code listed while Step 2 was off (asking_until null: no window applies, and it may be a PC in use)", () => { fake.opensAll = false; }],
+    ["one from an account service that names no window (no asking_until)", () => { fake.pcAddProofs = false; }],
+  ] as const) {
+    it(`keeps the card as it was for ${what}: Add and No for ten minutes, then Remove from my account, never that a request ran out`, async () => {
+      await signIn();
+      setUp();
+      await listedByDeviceCode();
+      fake.opensAll = true;
+      await mount();
+      expect(buttons()).toEqual(["Add", "No"]);
+      expect(text()).not.toContain("Expires in");
+      now += 11 * MINUTE;
+      await mount();
+      expect(buttons()).toEqual(["Remove from my account"]);
+      expect(text()).not.toContain("This request ran out");
+      expect(text()).toContain(`Name the PC gave itself: "${LABEL}"`);
+    });
+  }
+
+  it("never says more than ten minutes are left, whatever the two clocks say", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    // the account service's clock runs three minutes ahead of this device's
+    const row = fake.pcs(ACCOUNT)[0]!;
+    row.added_at = new Date(now + 3 * MINUTE).toISOString();
+    row.asking_since = now + 3 * MINUTE;
+    await mount();
+    expect(text()).toContain("Expires in 10 min");
+  });
+
+  it("shows the name the PC gave itself as one plain line, with no bidi controls", async () => {
+    await signIn();
+    const token = fake.issueToken(ACCOUNT, { device: true });
+    const response = await fake.fetch(`${ORIGIN}/v1/pcs/${PC}`, {
+      method: "PUT", headers: { authorization: `Bearer ${token}`, "content-type": "application/json" },
+      body: JSON.stringify({ label: "desk\u202etxt.exe", public_key: Buffer.from(key).toString("hex"), relay: "wss://relay.ovis.sh" }),
+    });
+    expect(response.ok).toBe(true);
+    await mount();
+    expect(text()).toContain('Name the PC gave itself: "desktxt.exe"');
+  });
+
+  it("goes by the account service's own window: past its asking_until the request ran out, whatever this device's clock says of the listing", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    // the listing's window runs from the sign-in that made it; here that sign-in was made five minutes before it listed
+    fake.pcs(ACCOUNT)[0]!.asking_since = now - 5 * MINUTE;
+    now += 6 * MINUTE;
+    await mount();
+    expect(text()).toContain("This request ran out. To add this PC, start again on the PC.");
+    expect(buttons()).toEqual(["No"]);
+  });
+
+  it("turns to the request ran out when the account service answers listing_expired to Add", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    service = new AccountService({ store, lock: memoryLock(), now: () => now, fetch: async (input: Request | string | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (new URL(request.url).pathname.endsWith("/admit")) return Response.json({ error: { code: "listing_expired", message: "x" } }, { status: 409 });
+      return fake.fetch(request);
+    } });
+    await mount();
+    await press("Add");
+    expect(text()).toContain("This request ran out. To add this PC, start again on the PC.");
+    expect(text()).not.toContain("The PC could not be added.");
+    expect(buttons()).toEqual(["No"]);
+  });
+
+  it("reads the listing again when the account service answers listing_changed to Add, and shows the one there now", async () => {
+    await signIn();
+    await listedByDeviceCode();
+    let refuse = true;
+    service = new AccountService({ store, lock: memoryLock(), now: () => now, fetch: async (input: Request | string | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      if (refuse && new URL(request.url).pathname.endsWith("/admit")) {
+        refuse = false;
+        return Response.json({ error: { code: "listing_changed", message: "x" } }, { status: 409 });
+      }
+      return fake.fetch(request);
+    } });
+    await mount();
+    const reads = fake.requests.filter((line) => line === "GET /v1/pcs").length;
+    await press("Add");
+    expect(fake.requests.filter((line) => line === "GET /v1/pcs").length).toBeGreaterThan(reads + 1);
+    expect(text()).not.toContain("The PC could not be added.");
+    expect(buttons()).toEqual(["Add", "No"]);
+  });
+
+  it("an own sign-in made days ago adds the PC with its registered key in one press: no Sign in again", async () => {
+    await signIn();
+    await registerKey();
+    now += 3 * 24 * 60 * MINUTE;
+    await listedByDeviceCode();
+    await mount();
+    await press("Add");
+    expect(admits()).toBe(1);
+    expect(challenges()).toBe(1);
+    expect(text()).not.toContain("Sign in again");
+    expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(false);
+    expect(text()).toContain(`New PC added to your account: ${LABEL}`);
+  });
+
+  it("a fresh sign-in adds as before: no challenge is asked", async () => {
+    await signIn();
+    await registerKey();
+    await listedByDeviceCode();
+    await mount();
+    await press("Add");
+    expect(admits()).toBe(1);
+    expect(challenges()).toBe(0);
+    expect(text()).toContain(`New PC added to your account: ${LABEL}`);
+  });
+
+  it("with an account service from before key proofs, an old sign-in with a key still gets Sign in again, asked once", async () => {
+    fake.pcAddProofs = false;
+    await signIn();
+    await registerKey();
+    now += 3 * 24 * 60 * MINUTE;
+    await listedByDeviceCode();
+    await mount();
+    await press("Add");
+    expect(text()).toContain("Sign in again to add it: your sign-in is more than ten minutes old.");
+    expect(buttons()).toContain("Sign in again");
+    expect(admits()).toBe(1);
+    expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
+  });
+
+  it("an own sign-in of any age says No: the listing goes, with no Sign in again", async () => {
+    await signIn();
+    now += 3 * 24 * 60 * MINUTE;
+    await listedByDeviceCode();
+    await mount();
+    await press("No");
+    expect(text()).not.toContain("Sign in again");
+    expect(fake.pcs(ACCOUNT)).toEqual([]);
+  });
+
+it("PCR-1: with an account service from before, a removal from a sign-in older than ten minutes removes nothing, and says to sign in again", async () => {
+    fake.pcAddProofs = false;
     await listedByDeviceCode();
     await signIn();
     now += 11 * MINUTE;
@@ -152,7 +327,8 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     expect(buttons()).toEqual(["Remove from my account"]);
   });
 
-  it("PCR-1: Sign in again signs in fresh in place and removes the same PC", async () => {
+  it("PCR-1: with an account service from before, Sign in again signs in fresh in place and removes the same PC", async () => {
+    fake.pcAddProofs = false;
     await listedByDeviceCode();
     await signIn();
     now += 11 * MINUTE;
@@ -358,6 +534,23 @@ it("PCR-1: a removal from a sign-in older than ten minutes removes nothing, and 
     expect(text()).not.toContain("The PC could not be added.");
     expect(text()).not.toContain("New PC added to your account");
     expect(buttons()).toEqual(["Add", "No"]);
+  });
+
+  it("an Add refused as the sign-in's age because the listing was replaced meanwhile reads the listing again, and asks no sign-in", async () => {
+    fake.completions = true;
+    await signIn();
+    await listedByDeviceCode();
+    service = new AccountService({ store, lock: memoryLock(), now: () => now, fetch: async (input: Request | string | URL, init?: RequestInit) => {
+      const request = new Request(input, init);
+      // a key proof signs the listing it read: another one in its place by the time it arrives is refused as session_not_fresh
+      if (new URL(request.url).pathname.endsWith("/admit")) { await replacedBehindTheCard(); return Response.json({ error: { code: "session_not_fresh", message: "x" } }, { status: 403 }); }
+      return fake.fetch(request);
+    } });
+    await mount();
+    await press("Add");
+    expect(text()).not.toContain("Sign in again");
+    expect(buttons()).toEqual(["Add", "No"]);
+    expect(fake.pcs(ACCOUNT)[0]?.listed_by_device).toBe(true);
   });
 
   it("account#67: No names the listing its card showed: a replacement is not removed, and the card shows it as it is now", async () => {

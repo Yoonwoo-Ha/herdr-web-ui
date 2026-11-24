@@ -511,12 +511,15 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         try {
           if (!(await directory.listPcs(bounded())).some((pc) => pc.server_id === offer.server_id)) {
             const publicKey = Array.from(importPublicKey(offer.server_public_key), (byte) => byte.toString(16).padStart(2, "0")).join("");
-            await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay }, bounded());
+            await directory.putPc(offer.server_id, { label: (offer.name ?? offer.server_id.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: offer.relay }, bounded(), undefined, { prove: true });
           }
         } catch (error) {
           if (error instanceof SignedOutError) throw new ConsentChangedError();
           signal.throwIfAborted();
           console.warn("Ovis: this PC could not be listed in the account before pairing", error instanceof AccountServiceError ? error.code : error instanceof Error ? error.name : error);
+          // refused for the sign-in itself (an old one with no key to prove, docs/account.md "In one press"): the failure
+          // screen signs in again right there, and the same pairing goes on after it
+          if (error instanceof AccountServiceError && error.code === "session_not_fresh") throw new AdmissionRefusedError("sign-in");
           throw new AdmissionRefusedError(error instanceof AccountServiceError && error.status === 429 ? "busy" : error instanceof AccountServiceError && error.status < 500 ? "refused" : "unanswered");
         }
       }
@@ -529,7 +532,7 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         signal.throwIfAborted();
         console.warn("Ovis: the account service did not take the admission", error instanceof AccountServiceError ? error.code : error instanceof Error ? error.name : error);
         if (!(error instanceof AccountServiceError)) throw new AdmissionRefusedError("unanswered");
-        throw new AdmissionRefusedError(error.code === "unknown_pc" ? "unlisted" : error.status === 429 ? "busy" : error.status >= 500 ? "unanswered" : "refused");
+        throw new AdmissionRefusedError(error.code === "session_not_fresh" ? "sign-in" : error.code === "unknown_pc" ? "unlisted" : error.status === 429 ? "busy" : error.status >= 500 ? "unanswered" : "refused");
       }
       // another tab signed out or in to another account while the post was out: no PAIR goes under the old one
       const now = await account.session();
@@ -729,7 +732,8 @@ export function createAccountController(mount: RelayShellMount, view: { readonly
         const listing = { label: (device.name ?? serverId.slice(0, 8)).slice(0, 48), public_key: publicKey, relay: device.relay };
         const again = sendAgainWhenBack({ before: sending, signal });
         // listed first, so a removal this client signs from now on reaches it by mailbox too
-        await account.forSignIn(session).putPc(serverId, listing, signal, again);
+        // a key proof only for a pairing just made from the Add and pair confirm (`consent`): opening a saved pairing signs nothing
+        await account.forSignIn(session).putPc(serverId, listing, signal, again, { prove: fresh && consent != null });
         // the PC takes an enrollment only from a session that signed in with the account key, which the ones above did not
         let signedIn = opened;
         // the account's other PCs this device is in, read first for what they keep out (docs/account.md, "Enrolling a PC")
