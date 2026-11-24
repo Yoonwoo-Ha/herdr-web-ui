@@ -348,6 +348,11 @@ describe("an invite whose time is over, still in the list", () => {
       const placed = await signListEntry(w.held().state, { kind: "invite", key: invite.key, exp: at + 900, uses: 1, auto: true, sealed: null }, { key: keys.key, privateKey: keys.signs }, at);
       await first.service.placeEntries(w.held().id, [placed.text], []);
       invites.push(invite.key);
+      // the account service holds five open invites at a time: its own invite of each is revoked here, which leaves the
+      // list's entry as it is (the signed-list formats, D11.5)
+      const auth = { authorization: `Bearer ${first.session.access_token}` };
+      const open = await (await w.fake.fetch(`${w.origin}/v1/pc-invites`, { headers: auth })).json() as { invites: { id: string }[] };
+      for (const { id } of open.invites) expect((await w.fake.fetch(`${w.origin}/v1/pc-invites/${id}`, { method: "DELETE", headers: auth })).status).toBe(204);
     }
     w.clock.now += 16 * 60_000;
     await second.list.sync();

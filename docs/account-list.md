@@ -1732,10 +1732,13 @@ every route in use.
 - **The switch.** `listAccounts` stands for the service's `OVIS_LIST_ACCOUNTS`: account ids
   separated by commas, or `*` for every account. It is empty by default, and then every `/v2` route
   answers `404 not_found` as an unknown one and the mailbox's `with_list` says `list: null`. A test
-  sets it first.
-- **Devices** call by bearer: `POST /v2/lists` (entry 0), `GET /v2/lists/mine`, and under
-  `/v2/lists/{list}/`: `GET log?after=&limit=`, `GET wraps?member=`, `POST entries`, `POST claims`,
-  `GET claims`, `GET posts`, `POST posts/{endpoint}/attempt`. A write takes an app's own sign-in
+  sets it first. `listMigrateAccounts` stands for `OVIS_LIST_MIGRATE_ACCOUNTS`, read the same way:
+  the accounts that may move onto a list by the one-request birth. `GET /v2/lists/mine` says
+  `migrate: true` for them while they have no list.
+- **Devices** call by bearer: `POST /v2/lists` (entry 0, or a birth), `GET /v2/lists/mine`, and
+  under `/v2/lists/{list}/`: `GET log?after=&limit=`, `GET wraps?member=`, `PUT wraps`,
+  `POST entries`, `POST claims`, `GET claims`, `GET posts`, `POST links`,
+  `POST posts/{endpoint}/attempt`. A write takes an app's own sign-in
   that no block freezes. A genesis, a claim and a batch that places an `invite` also take a sign-in
   made in the last ten minutes, or an older one with a key proof: a challenge of
   `POST /v1/pcs/challenge` (with `opensAll` on), signed by the key that sign-in registered over
@@ -1745,7 +1748,8 @@ every route in use.
   (`inviteMakeBytes`: `invite` or `invite-auto`, no server_id, the invite's key as the listing).
 - **PCs** prove their relay key in the body of each call (a challenge of `POST /v1/pc/challenge`
   answered with the role `account`, one per call): `POST /v2/pc/list`, `/v2/pc/list/log`,
-  `/v2/pc/list/wraps`, `/v2/pc/list/entries`, `/v2/pc/list/keys` and `/v2/pc/list/attempt`. A
+  `/v2/pc/list/wraps`, `/v2/pc/list/wraps/put`, `/v2/pc/list/entries`, `/v2/pc/list/keys` and
+  `/v2/pc/list/attempt`. A
   mailbox pull with `with_list: true` also gets the list's id and head, and `list: null` unless the
   account is on the switch, has a list, and lists that PC confirmed: so `null` tells a test no
   more than that, never that the account has no list.
@@ -1769,6 +1773,52 @@ every route in use.
   writers at one head: one is placed. A removal (`remove` entries with at most one `epoch` last, at
   the head, from a sign-in that may write, its first entry signed by a signer of the list) spends
   that signer's own counter instead of the account's requests; a replay never does.
+- **A link** says which registered sign-in key (the one `registerSessionKey` registered for that
+  sign-in) is which member key: `{ member, device }`, the member key's and the registered key's
+  signatures over the library's `linkBytes` (`shared/account-list-migrate.ts`). It rides on a
+  genesis, on a claim (kept with the claim and written when that key's `device` entry is placed,
+  while the sign-in still holds the key), or on `POST links` for a device that is in. A bare
+  86-character text is `400 link_unsigned`; any other half that does not verify is
+  `400 link_invalid`. A member key has one link and a registered key has one: a registered key
+  linked to another device that is in is `409 link_taken`, a link to a key that is out gives way.
+- **What a list adds to a placement** (S2): an `invite` has `uses` 1 (`uses_one`) and makes the
+  service's own invite of that key, ending at its `exp` (`exp_too_late` past fifteen minutes, or
+  past the end of an invite of that key and kind made first, which it takes as it is); a key an
+  invite or a device had is `409 invite_key_used`, a sixth open invite `409 invites_full`, an auto
+  invite past the day's one-press adds `429 pc_add_cap`. A `remove` that ends a device signs out
+  the sign-in whose registered key is linked to it (or that registered the member key itself) and
+  marks that key removed; one that ends an invite revokes its unused service invite. A registered
+  key that is itself entry 0's or a carried member key is its own link until it hands over (a link
+  the table holds for either key comes first): it stands up the snapshot's chain, its sign-in may
+  store wraps, and a removal of it signs that sign-in out (any registered key that is the ended key
+  is, unless that sign-in is linked to a device the batch leaves in). A registered key that is
+  itself a key of the list that is in is taken wherever a link is (`link_taken` on `POST links`;
+  a claim's or a hand-over's link
+  to it is not written, and the entry is placed all the same). A later
+  hand-over (one `device` entry that rotates its signer, signed by the key the calling sign-in
+  registered, where that signer is a device carried in) needs no claim, is outside the budget and
+  may carry `link` (any other batch with a `link` is `400 invalid_request` after its second lock);
+  any other such entry needs its claim.
+- **Wraps with no entry** (`PUT wraps`, `/v2/pc/list/wraps/put`) are stored for the current epoch
+  and its wrap keys only, never over one that stands (`stored` counts the new ones): from a
+  sign-in that stands for a device the list lets in now (`403 not_linked` otherwise), or a PC in
+  the list.
+- **The birth** (`POST /v2/lists` with `entries`, Part F's F10b as the service built it): entry 0
+  as D1 reads it, then `409 list_exists` with the list before anything of the run (a birth sent
+  again gets its own list back), then `carried_not_open` at index 1 for an account that is not on
+  the migrate switch, then `first_signer` for an entry 0 not signed by the key the calling sign-in
+  registered, then `403 not_carried` at index 0 for a first signer Step 2 does not let in today.
+  The run is read in order, each entry's shape before the library's verdict: 0 to 64
+  `carried`, one `device` that rotates entry 0's signer, one `epoch`, nothing after
+  (`birth_shape` at the first entry out of place, or one past the end for a run that stops short).
+  Each `carried` is a key a live, unfrozen own sign-in registered that Step 2 lets in today, or a
+  PC of the account no device code listed (`403 not_carried`). The writer, entry 0's signer and
+  every carried key and PC are read again in the write. All placed or none; wraps for epoch 1. An
+  `index` is the entry's place in the log: entry 0 is 0.
+- **For an account that has a list** (its list, whatever the switch says): the snapshot also lets in
+  at once a registered key linked to a device another member let in, while a member up the chain
+  of who let it in passes Step 2's rules; a PC redeems only an invite the list holds as open
+  (`409 invite_not_in_list`); and a PC's take of a one-press admission is `409 list_add`.
 - **A PC with no standing** (neither listed by the account nor a row in the list) gets `404` from
   the placing route before its batch is read: it learns nothing of the list there.
 - **Listing a new PC** (`PUT /v1/pcs/{server_id}`) in an account that has a list takes an own
@@ -1777,8 +1827,8 @@ every route in use.
 - **Limits** are in `listLimits`, which a test may lower to reach `list_full`, `entry_budget` or a
   PC's calls a minute.
 - `accountList(account)` gives what the service holds, no lie applied: the list id, every entry's
-  text, the head, the service's own state of the list, every stored wrap, and the claims and posts
-  that still lock.
+  text, the head, the service's own state of the list, every stored wrap, the claims and posts
+  that still lock, and the links.
 
 ### Making the service lie
 
@@ -1801,5 +1851,19 @@ and to everyone when it is left out.
 | `flipEntry`, `flipWrap` | one byte flipped in that entry's body or that wrap | the entry no longer holds; the wrap does not open |
 | `headMoved` | `409 head_moved` for every placement | a writer stops after its own bound and says so |
 | `dropWraps` | a placed batch's entries without its wraps | a member with no wrap sees no names and is let in all the same |
-| `rebuilding` | `503 list_rebuilding` (retry-after 1) to placements, and to a PC's reads whose only right is its row in the list | the client sends the same request again |
-| `stopped` | `503 list_stopped` to the same calls | the client shows that the service cannot change the list |
+| `rebuilding` | `503 list_rebuilding` (retry-after 1) to placements, a PC's reads whose only right is its row in the list, the links and wrap uploads, a redeem and the snapshot | the client sends the same request again (a PC with a new challenge and proof: each call spends one); a PC keeps the devices it read last |
+| `stopped` | `503 list_stopped` to the same calls but the snapshot, which answers `200` by Step 2's rules and adds nobody for the list | the client shows that the service cannot change the list |
+
+`withholdAfter` on a list that a birth made serves a part of that birth: entry 0 and some
+`carried`, or everything but the `epoch`. Two lies are about an account rather than a list:
+`tamperAccount(account, lie)` sets them and `untamperAccount(account)` ends them.
+
+| lie | what happens | what a test proves with it |
+|---|---|---|
+| `withholdAnswer` | a genesis, a birth or a placement is stored and `fetch` rejects as on a lost connection | the client asks again and learns from `list_exists`, or `placed: 0`, what was stored |
+| `eligibleAgain` | these registered keys are listed eligible in the snapshot, removed or not | a PC from before the list trusts it; one that follows the list does not |
+
+`forgeBirth(account, { keys?, endpoints? })` stores a birth of the fake's own as the account's list:
+a genesis by a key of its own, a `carried` for each key (by default every registered key that is
+not removed) and endpoint, a hand-over to another key of its own and its `epoch`. A device or PC
+that holds the account's list to who started it refuses it.
