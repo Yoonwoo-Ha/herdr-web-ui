@@ -11,6 +11,7 @@ import { newRecordId, pcAddSigningBytes, registerSigningBytes, type AccountRecor
 import { isWssOrigin } from "../../../shared/relay-offer.ts";
 import { toBase64Url } from "../../../shared/relay-pair-sas.ts";
 import { GLOBAL_APP } from "../../../shared/relay-regions.ts";
+import { genesisBody, hintOf, nowOf, pageOf, wrapsOf, type ListHint, type ListPage, type ListWrap } from "./listAnswers.ts";
 import type { PcProofFields } from "./pcProof.ts";
 import type { AccountKey, AccountLock, AccountProvider, AccountSession, AccountStore } from "./store.ts";
 import { ACCOUNT_PROVIDERS, accountLock, indexedAccountStore } from "./store.ts";
@@ -122,9 +123,12 @@ export const PC_ADD_FRESH_MS = 9 * 60_000;
 /** `key_proof` of an add: a challenge of POST /v1/pcs/challenge and this sign-in's key's signature (raw r then s, base64url). */
 interface PcAddProof { readonly challenge_id: string; readonly signature: string }
 
-/** `retryAfterMs`: the wait the answer's `retry-after` named (a 429's), or null without one. */
+/**
+ * `retryAfterMs`: the wait the answer's `retry-after` named (a 429's), or null without one. `reason`: the one word the
+ * refusal adds to its code, where it has one (an entry that was refused says why), never its message.
+ */
 export class AccountServiceError extends Error {
-  constructor(readonly status: number, readonly code: string, message: string, readonly retryAfterMs: number | null = null) {
+  constructor(readonly status: number, readonly code: string, message: string, readonly retryAfterMs: number | null = null, readonly reason: string | null = null) {
     super(message);
     this.name = "AccountServiceError";
   }
@@ -165,6 +169,9 @@ export interface SendAgain {
   readonly before: (send: number) => Promise<void>;
   readonly wait: (error: AccountServiceError | AccountServiceUnreachableError, sent: number) => Promise<boolean>;
 }
+
+/** A request that is sent once: no second send after a 401, a 429 or no answer. */
+const SENT_ONCE: SendAgain = { sends: 1, before: async () => {}, wait: async () => false };
 
 /** The sign-in is gone (revoked, expired past refresh, or never made): the client is signed out. */
 export class SignedOutError extends Error {
@@ -231,14 +238,16 @@ function isRecord(value: unknown): value is Record<string, unknown> {
 /** The service's error code only: its message is the service's text, which could echo a token, so it is never kept. */
 export async function failure(response: Response): Promise<AccountServiceError> {
   let code = "http_error";
+  let reason: string | null = null;
   try {
     const body: unknown = await response.json();
     const error = isRecord(body) && isRecord(body.error) ? body.error : null;
     if (typeof error?.code === "string" && /^[a-z_]{1,40}$/.test(error.code)) code = error.code;
+    if (typeof error?.reason === "string" && /^[a-z_]{1,40}$/.test(error.reason)) reason = error.reason;
   } catch (error) {
     if (!(error instanceof SyntaxError)) throw error;
   }
-  return new AccountServiceError(response.status, code, `The account service answered ${response.status} (${code})`, retryAfterMs(response.headers.get("retry-after")));
+  return new AccountServiceError(response.status, code, `The account service answered ${response.status} (${code})`, retryAfterMs(response.headers.get("retry-after")), reason);
 }
 
 /** A `retry-after` in delay-seconds or as an HTTP date, in ms from now; null without one either reads. */
@@ -739,6 +748,81 @@ export class AccountService {
     const again: SendAgain | undefined = ready === undefined ? undefined : { sends: 2, before: async () => ready(), wait: async () => false };
     const body = await this.call("POST", "/v1/safety-records", { record }, AbortSignal.timeout(5_000), again, 200);
     if (!isRecord(body) || body.id !== record.id) throw new AccountServiceError(502, "invalid_answer", "The account service did not confirm this record");
+  }
+
+  /**
+   * One request of the list's routes, sent once. Whatever it is answered is that request's answer and no more: a 401
+   * neither refreshes the tokens nor ends the sign-in here, as it does for the routes this client has always called.
+   * These routes are asked by themselves, on a clock, of services that may not have them: what such a service says
+   * of a route it does not know must not sign anybody out. A sign-in that really ended is found by the next call that
+   * a person's own act makes. `only`: the one status that is an answer.
+   */
+  private listCall(method: string, path: string, body?: unknown, signal?: AbortSignal, only = 200): Promise<unknown> {
+    return this.call(method, path, body, signal, SENT_ONCE, only);
+  }
+
+  /**
+   * The signed list the account service names for this account, with the head it says the list has (`GET
+   * /v2/lists/mine`; docs/account-list.md, "On a device"): null for an account that may have a list and has none, and
+   * "off" for one the service keeps no lists for (404: it is not on the service's switch, or the service has no such
+   * route). `now` is the service's clock in seconds, where it says it. All of it is a hint: a device follows a list
+   * only by its own evidence.
+   */
+  async accountList(signal?: AbortSignal): Promise<{ readonly hint: ListHint | null; readonly now: number | null } | "off"> {
+    let body: unknown;
+    try { body = await this.listCall("GET", "/v2/lists/mine", undefined, signal); }
+    catch (error) {
+      if (error instanceof AccountServiceError && !(error instanceof AccountRefreshError) && error.status === 404) return "off";
+      throw error;
+    }
+    const hint = hintOf(body);
+    if (hint === undefined) throw new AccountServiceError(502, "invalid_answer", "The account service sent no list");
+    return { hint, now: nowOf(body) };
+  }
+
+  /**
+   * Starts the account's list with the entry 0 this device signed (`POST /v2/lists`), and hands over the first epoch
+   * key's wrap for the device itself. The service takes it from an own sign-in made in the last ten minutes, or older
+   * with a proof by its registered key (addProof, purpose `list-genesis`, over the list id): `session_not_fresh`
+   * otherwise. "exists": the account has a list already, this one or another's (409 `list_exists`); which one is read
+   * from the log, never from this answer. `list` is entry 0's hash, which the caller worked out itself.
+   */
+  async startList(list: string, entry: string, wrap: { readonly member: string; readonly wrap: string }, signal?: AbortSignal): Promise<"placed" | "exists"> {
+    const body = genesisBody(entry, wrap);
+    const proved = (): Promise<PcAddProof | null> => this.addProof("list-genesis", list, async () => "", signal);
+    const send = async (proof: PcAddProof | null): Promise<"placed" | "exists"> => {
+      try { await this.proving(proof, () => this.listCall("POST", "/v2/lists", proof === null ? body : { ...body, key_proof: proof }, signal, 201)); }
+      catch (error) {
+        if (error instanceof AccountServiceError && !(error instanceof AccountRefreshError) && error.status === 409 && error.code === "list_exists") return "exists";
+        throw error;
+      }
+      return "placed";
+    };
+    const proof = await proved();
+    try { return await send(proof); }
+    catch (error) {
+      // the proof's challenge was spent or ran out on the way: one more, made anew
+      if (proof === null || !(error instanceof AccountServiceError && error.status === 400 && error.code === "challenge_invalid")) throw error;
+      return send(await proved());
+    }
+  }
+
+  /**
+   * One page of a list's log after `after`, or from entry 0, of at most `limit` entries (`GET /v2/lists/{list}/log`).
+   * Every entry in it is the reader's to check.
+   */
+  async listLog(list: string, after: number | null, signal?: AbortSignal, limit?: number): Promise<ListPage> {
+    const query = [...(after === null ? [] : [`after=${after}`]), ...(limit === undefined ? [] : [`limit=${limit}`])].join("&");
+    const page = pageOf(await this.listCall("GET", `/v2/lists/${list}/log${query === "" ? "" : `?${query}`}`, undefined, signal));
+    if (page === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no page of the list");
+    return page;
+  }
+
+  /** The epoch keys the service holds wrapped to `member` (`GET /v2/lists/{list}/wraps`). Only that member's own key opens one. */
+  async listWraps(list: string, member: string, signal?: AbortSignal): Promise<ListWrap[]> {
+    const wraps = wrapsOf(await this.listCall("GET", `/v2/lists/${list}/wraps?member=${encodeURIComponent(member)}`, undefined, signal));
+    if (wraps === null) throw new AccountServiceError(502, "invalid_answer", "The account service sent no wraps");
+    return wraps;
   }
 
   /**

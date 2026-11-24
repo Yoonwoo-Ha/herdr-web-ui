@@ -8,6 +8,7 @@
 import { exportAccountKey } from "../../../shared/account-records.ts";
 import type { UnsentBlocks } from "./unsentBlocks.ts";
 import type { AddRecord, RemoveRecord } from "../../../shared/account-records.ts";
+import type { MemberEncryptionKey } from "../../../shared/account-list-seal.ts";
 import type { RelayOffer } from "../../../shared/relay-offer.ts";
 
 export interface AccountKey {
@@ -60,6 +61,12 @@ export interface PendingPairing {
 
 interface Records {
   key: AccountKey;
+  /**
+   * The key this device opens its lists' epoch keys with (account/listKeys.ts): made on first need and kept as the
+   * CryptoKey it is, which cannot be exported. Beside `key`, so that it is forgotten with it: a device with a new
+   * account key is a new member, which names a key of its own.
+   */
+  enc_key: MemberEncryptionKey;
   session: AccountSession;
   /** by `state`, so a return consumes only its own sign-in and two tabs can each have one */
   pending: Readonly<Record<string, PendingSignIn>>;

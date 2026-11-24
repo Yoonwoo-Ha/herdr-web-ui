@@ -1,6 +1,7 @@
 import type { Root } from "react-dom/client";
 import type { HoldState } from "../../../shared/account-devices-api.ts";
 import type { PendingPushStore } from "../push.ts";
+import type { AccountList } from "../account/accountList.ts";
 import type { AppPlatform } from "../appShell.ts";
 import type { AccountStore } from "../account/store.ts";
 import type { EnrollmentState, ShellDeviceStore } from "./device.ts";
@@ -238,6 +239,11 @@ export interface RelayShellMount {
   accountService?: string | null;
   accountProviders?: readonly AccountProvider[];
   accountFetch?: (input: Request | string | URL, init?: RequestInit) => Promise<Response>;
+  /**
+   * this device's copy of its account's signed list (account/accountList.ts): the page's own by default, and none where
+   * `accountStore` or `accountFetch` is given without it, or with null
+   */
+  accountList?: AccountList | null;
   openSignIn?: (url: string) => void;
   checkPc?: typeof checkPc;
 }
