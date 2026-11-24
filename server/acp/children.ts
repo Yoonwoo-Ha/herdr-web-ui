@@ -35,6 +35,10 @@ export interface AcpStart {
   name?: string;
   /** `_meta` of the keeper's `session/new` (the Claude adapter takes its model and settings this way) */
   sessionMeta?: unknown;
+  /** `configOptions` of the keeper's `session/new`, set before the agent answers it */
+  configOptions?: readonly unknown[];
+  /** environment variables, each naming a file of that name in the child's private ROOT */
+  privateFiles?: Record<string, string>;
   /** the terminal's environment over the core's */
   env?: Record<string, string>;
   runId?: string;
@@ -190,6 +194,7 @@ export class AcpChildren {
       bin, root, "--cwd", start.cwd, "--name", start.name ?? start.harness,
       ...(start.sessionMeta === undefined ? [] : ["--session-meta", JSON.stringify(start.sessionMeta)]),
       ...(start.mcpServers === undefined ? [] : ["--mcp-servers", JSON.stringify(start.mcpServers)]),
+      ...(start.configOptions === undefined ? [] : ["--config-options", JSON.stringify(start.configOptions)]),
       ...(start.announceSubagents ? ["--announce-subagents"] : []),
       ...(start.askEveryTime ? ["--ask-every-time"] : []),
       "--", ...start.argv,
@@ -201,7 +206,7 @@ export class AcpChildren {
         argv, cwd: start.cwd,
         ...(start.parentPane === undefined ? { no_parent: true } : { parent: start.parentPane }),
         labels: { [LABEL]: id, ...(start.runId ? { "ovis.run": start.runId } : {}), ...(displayName ? { [PANE_NAME_LABEL]: displayName, [TAB_NAME_LABEL]: displayName } : {}) },
-        ...(start.askEveryTime ? { env: { ...start.env, OPENCODE_DB: join(root, "opencode.db") } } : start.env === undefined ? {} : { env: start.env }),
+        ...(start.env === undefined && start.privateFiles === undefined ? {} : { env: { ...start.env, ...Object.fromEntries(Object.entries(start.privateFiles ?? {}).map(([name, file]) => [name, join(root, file)])) } }),
       }));
     } catch (error) {
       const live = await this.liveTerminals().catch((lookupError: unknown) => {

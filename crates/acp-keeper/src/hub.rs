@@ -330,11 +330,22 @@ impl Hub {
         );
     }
 
-    fn new_session(&mut self) {
-        let mut params = json!({"cwd": self.opts.cwd, "mcpServers": self.opts.mcp_servers});
+    /// What opens a session, new or loaded again (after the real TUI): the same launch settings both times, so a
+    /// reloaded session does not come back under settings the launch had left out.
+    fn session_params(&self, mut params: Value) -> Value {
+        params["cwd"] = json!(self.opts.cwd);
+        params["mcpServers"] = json!(self.opts.mcp_servers);
         if let Some(meta) = &self.opts.session_meta {
             params["_meta"] = meta.clone();
         }
+        if let Some(options) = &self.opts.config_options {
+            params["configOptions"] = Value::Array(options.clone());
+        }
+        params
+    }
+
+    fn new_session(&mut self) {
+        let params = self.session_params(json!({}));
         self.request("session/new", params, Own::NewSession);
     }
 
@@ -492,11 +503,8 @@ impl Hub {
                     }
                     Some(id) if can_load => {
                         self.model.session = Some(id.clone());
-                        self.request(
-                            "session/load",
-                            json!({"sessionId": id, "cwd": self.opts.cwd, "mcpServers": self.opts.mcp_servers}),
-                            Own::LoadSession { resumed: self.resumed },
-                        );
+                        let params = self.session_params(json!({"sessionId": id}));
+                        self.request("session/load", params, Own::LoadSession { resumed: self.resumed });
                     }
                     _ => self.new_session(),
                 }

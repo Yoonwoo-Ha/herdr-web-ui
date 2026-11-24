@@ -8,8 +8,7 @@ import { coreConnection } from "../herdr-core/runtime.ts";
 import { AcpStartFailed, AcpUnavailable, type AcpChildren } from "../acp/children.ts";
 import { KeeperRequestError } from "../acp/client.ts";
 import { resolveHarness, type HarnessCommand } from "./harnesses.ts";
-import { OPEN_REVIEW, permissionLaunch } from "./permission-launch.ts";
-import { runVersion, VERSION_TIMEOUT_MS } from "../agent-catalog-detect.ts";
+import { AGENT_MCP_SERVER, askable, askRefusal, permissionLaunch } from "./permission-launch.ts";
 import { RunStore, type Run } from "./runs.ts";
 import { Ledger, type ToolChild } from "./ledger.ts";
 import { validArgs } from "./guards.ts";
@@ -56,7 +55,7 @@ export class AgentToolHub {
   get setting() { return this.options.setting(); }
   private verbs(principal: { depth: number; ceiling?: string }): readonly string[] {
     const policy = this.setting;
-    return policy.level === "off" ? [] : policy.level === "start" && (principal.ceiling || policy.harnesses.includes("opencode")) && principal.depth < policy.depth ? Object.keys(TOOL_SCHEMAS) : VIEW_VERBS;
+    return policy.level === "off" ? [] : policy.level === "start" && (principal.ceiling || policy.harnesses.some(askable)) && principal.depth < policy.depth ? Object.keys(TOOL_SCHEMAS) : VIEW_VERBS;
   }
   reconcileLaunches() { return this.ledger.reconcile(this.options.acp); }
   settingsChanged(): void { if (this.setting.level === "off") this.runs.revokeAll(); }
@@ -78,7 +77,7 @@ export class AgentToolHub {
   command(tokenFile: string) {
     const [command, ...args] = projectSafeCommand("agent-mcp");
     if (!command) throw new Error("Missing relay command.");
-    return { name: "ovis-agent", command, args: [...args, "--socket", this.address, "--token-file", tokenFile], env: [] };
+    return { name: AGENT_MCP_SERVER, command, args: [...args, "--socket", this.address, "--token-file", tokenFile], env: [] };
   }
   private async serial<T>(id: string, action: () => Promise<T>): Promise<T> {
     const prior = this.tails.get(id) ?? Promise.resolve();
@@ -112,7 +111,7 @@ export class AgentToolHub {
     const allowed = () => !!auth() && this.verbs(run).includes(verb);
     const session = String(args.session ?? "");
     if (verb === "start" || verb === "ask") {
-      if (!run.ceiling && run.depth < this.setting.depth && (args.harness !== "opencode" || !this.setting.harnesses.includes("opencode"))) return refuse("not_granted", "This harness has no verified ask-for-everything launch.");
+      if (!run.ceiling && run.depth < this.setting.depth && (!askable(String(args.harness)) || !this.setting.harnesses.includes(String(args.harness)))) return refuse("not_granted", "This harness has no verified ask-for-everything launch.");
       if (!allowed()) return refuse("depth_exceeded", "This run is at its depth limit.");
       const started = await this.serial(run.id, async () => {
         if (!allowed()) return deny();
@@ -206,10 +205,9 @@ export class AgentToolHub {
     if (own.length + [...this.ledger.launches.values()].filter(i => i.starter === run.id).length >= HARNESS_LIMITS.children) return refuse("children_limit", "Four child slots are in use.");
     const command = (this.options.resolve ?? resolveHarness)(kind);
     if (!command) return refuse("start_failed", "This harness has no supported ACP adapter.");
-    if (kind === "opencode" && !command.ceiling) {
-      const bin = command.argv[0];
-      const probe = bin && await runVersion(bin, ["--version"], VERSION_TIMEOUT_MS);
-      if (!probe || probe.exitCode !== 0 || !/^(?:opencode v?)?2\.2\.2$/.test(probe.stdout.trim())) return refuse("not_granted", "This OpenCode version has no verified all-ask launch.");
+    if (command.ceiling?.profile !== run.ceiling || !run.ceiling) {
+      const refusal = await askRefusal(kind, command);
+      if (refusal) return refuse("not_granted", refusal);
     }
     const cwd = typeof args.cwd === "string" ? args.cwd : (await coreConnection().call("terminal.get", { terminal: run.self })).cwd;
     if (!statSync(cwd, { throwIfNoEntry: false })?.isDirectory()) return refuse("bad_request", "The folder does not exist.");
@@ -223,7 +221,7 @@ export class AgentToolHub {
       if (typeof args.key === "string") this.runs.rememberStart(run.id, args.key, key.id);
       this.ledger.begin(intent);
       const child = await this.options.acp.start({ harness: kind, argv: launch.argv, env: { ...launch.env, OVIS_AGENT_SOCKET: this.address, OVIS_AGENT_TOKEN_FILE: key.tokenFile },
-        cwd, parentPane: run.self, runId: key.id, mcpServers: [this.command(key.tokenFile)], askEveryTime: launch.ceiling.profile === OPEN_REVIEW });
+        cwd, parentPane: run.self, runId: key.id, mcpServers: [this.command(key.tokenFile)], askEveryTime: launch.askEveryTime, sessionMeta: launch.sessionMeta, configOptions: launch.configOptions, privateFiles: launch.privateFiles });
       this.view.signInNeeded.delete(kind);
       if (child.client.sessionMode !== launch.ceiling.mode) {
         await this.options.acp.stop(child.id);

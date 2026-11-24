@@ -8,7 +8,7 @@ import { SettingsProvider } from "../lib/settings.ts";
 import { AgentCallsRows } from "./AgentCallsRows.tsx";
 
 const agent = (id: string, name: string, installed: boolean, version: string | null = null) => ({ id, name, state: { installed, version } }) as unknown as AgentCatalogRow;
-const agents = [agent("opencode", "OpenCode", true, "2.2.2"), agent("claude", "Claude Code", true, "2.1.330"), agent("gjc", "GJC", false)];
+const agents = [agent("opencode", "OpenCode", true, "2.2.2"), agent("claude", "Claude Code", true, "2.1.331"), agent("gjc", "GJC", false)];
 
 describe("Settings > Agents > Let agents call other agents", () => {
   const descriptors = new Map<string, PropertyDescriptor | undefined>();
@@ -78,6 +78,13 @@ describe("Settings > Agents > Let agents call other agents", () => {
     await act(async () => { toggle().props.onClick(); });
     expect(saved).toEqual([{ level: "start", depth: 1, harnesses: [] }]);
     expect(chips()).toHaveLength(0);
+  });
+
+  it("offers Claude Code at the version its ask-every-time launch was run against", async () => {
+    mount(false, [agent("claude", "Claude Code", true, "2.1.330")]);
+    await act(async () => { toggle().props.onClick(); });
+    expect(saved).toEqual([{ level: "start", depth: 1, harnesses: ["claude"] }]);
+    expect(chips().map((chip) => chip.children.join(""))).toEqual(["Claude Code"]);
   });
 
   it("cannot be turned on from a watching device", () => {
