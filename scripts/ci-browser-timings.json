@@ -197,5 +197,6 @@
   "scripts/terminal-dispose-browser-qa.ts": 1,
   "scripts/external-link-tab-regression.ts": 1,
   "scripts/relay-qa-teardown-regression.ts": 1,
-  "scripts/relay-device-indexeddb-regression.ts": 1
+  "scripts/relay-device-indexeddb-regression.ts": 1,
+  "scripts/account-list-seal-browser-qa.ts": 1
 }

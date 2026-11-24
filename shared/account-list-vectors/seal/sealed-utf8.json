@@ -1,0 +1,20 @@
+{
+  "name": "sealed-utf8",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "AaiLYq5ubGHxW3yZ42UBgDFIVQyGVHVDky3JzaG_mGN_gotyTh8WBsq1as2ET2gC6EPO-rUqHGH8Nl4aX3zmcM5R9jJNJf_oIsUstiEW"
+  },
+  "expect": {
+    "fields": [
+      [
+        "label",
+        "거실 맥북 🖥"
+      ]
+    ]
+  }
+}

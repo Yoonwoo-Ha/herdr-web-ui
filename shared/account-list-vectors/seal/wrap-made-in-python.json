@@ -1,0 +1,20 @@
+{
+  "name": "wrap-made-in-python",
+  "note": "Made by a Python script that shares no code with the module or the list's readers (hashlib and the `cryptography` library): docs/account-list.md, \"The vectors of seal/\".",
+  "keys": {
+    "TEST-ONLY-python-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg7aqu79lDWgHBWuQo3Vu5R8YbDWj2QYllfAuLVxEmhhuhRANCAATvJlT7A0QplzU15d3P6fddlP7mIH5RX7tS3rN5y2l7B2XynDm5ShGCLfLFBMzom8DoMTU2Bd4aSXxvv8ZI8NuE",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7yZU-wNEKZc1NeXdz-n3XZT-5iB-UV-7Ut6zectpewdl8pw5uUoRgi3yxQTM6JvA6DE1NgXeGkl8b7_GSPDbhA"
+    }
+  },
+  "wrap": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "epoch": 5,
+    "commitment": "016284a839ba0cdf4e26cb0526386007a0597b3c41cb0f0ee06c0efe67f2c53d",
+    "member": "TEST-ONLY-python-member",
+    "text": "AfacRwJ08KSfXBaTpJTCZbun63luxycjQjfmFdvjUSiG6jIvrCFJfX7Ro0ClR5L-w5rng6xW6SuBwxyrjsYk6yeN2J6qm-7AJZUz3VxWZY9JjgH1NCiJdLarqTxpIIE6mak_kIJyXcQpB9Eb_RBiXGo"
+  },
+  "expect": {
+    "key": "cb6f0f20bce5290c3db40add97a5491d8687a173892463eb94e4d654863a4cc3"
+  }
+}

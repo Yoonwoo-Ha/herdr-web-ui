@@ -1,0 +1,20 @@
+{
+  "name": "sealed-seq-15-digits",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 999999999999999,
+    "epoch": {
+      "epoch": 999999999999999,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "AVqAxaI0xKoApKMookkBn6jw39tcVG7v8g8M5lRQHgF1Dbp45YuCjl4RVHk8JSAy2C90SERKTreuQ1FkBQFMkIw"
+  },
+  "expect": {
+    "fields": [
+      [
+        "label",
+        "Phone"
+      ]
+    ]
+  }
+}

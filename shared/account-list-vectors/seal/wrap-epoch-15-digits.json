@@ -1,0 +1,23 @@
+{
+  "name": "wrap-epoch-15-digits",
+  "keys": {
+    "TEST-ONLY-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgAN0JX9l4zwCbjepGn4shha948D2Il_TkDWbjJorjyDyhRANCAASkz7AKDJQTy4cxb89uOT0MXeB7PCcXN6Y8NXypxIezR1MX3lo9XDGfkLHNZgs-N90100YGOgH4lJ-Hht3-eKl6",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEpM-wCgyUE8uHMW_Pbjk9DF3gezwnFzemPDV8qcSHs0dTF95aPVwxn5CxzWYLPjfdNdNGBjoB-JSfh4bd_nipeg"
+    },
+    "TEST-ONLY-other-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQgTfYQD6ej2Mci8Yl1Y0nbiy6M7uMD1t9anTiqSjjUS-ChRANCAAQtoJXDy870eNFxTtAuhybNVQNwP2pZssd21Ouq1N6T3YHUQ6ApXGGzr4kEY7Cr-Jyw4Bsov-prKMYXXgV-bxlU",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAELaCVw8vO9HjRcU7QLocmzVUDcD9qWbLHdtTrqtTek92B1EOgKVxhs6-JBGOwq_icsOAbKL_qayjGF14Ffm8ZVA"
+    }
+  },
+  "wrap": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "epoch": 999999999999999,
+    "commitment": "1bf1f900a03c244eefaafe91e1706332454185856bced7d3adbca223c41e2287",
+    "member": "TEST-ONLY-member",
+    "text": "AfoZl_GzsEybBpmhTo1WA_1Eqr70cMG-Kz-Qdkj-pxJHLb6mXwLlL_8WtnX42oNmbe3GpDL51GG4LL5ks4tYYm8WyLND6doWcDLMUv9mf39dIdFs7EeGXWxYR3q0bbAMobJSsP8_Bv0-qqZmP0WeTdo"
+  },
+  "expect": {
+    "key": "503210f968e966e93f82d4667d3fae166fdd38358453d446652c3cfcccbfd37a"
+  }
+}

@@ -1,0 +1,16 @@
+{
+  "name": "link-other-epoch",
+  "note": "The same key, said to be of another epoch.",
+  "link": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "from": {
+      "epoch": 4,
+      "key": "46aba7fe34f5c5d000d0bb9effd5d83c914cf131e830c345e2d98552109d746a"
+    },
+    "commitment": "4de551e69206ec86ea5280802708a895b74a94708fbf35fabad124cbcc3c50d8",
+    "bytes": "AaUTbD7PdXFrhyaI3XunY9Q6RIYCtzyRuH3RmY-CvNKrfYo_xKnD5itcjKVGWtRI_YTwC4yw_7M0zPPjgQ"
+  },
+  "expect": {
+    "why": "refused"
+  }
+}

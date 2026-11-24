@@ -1,0 +1,20 @@
+{
+  "name": "wrap-epoch-0-made-in-python",
+  "note": "Made by a Python script that shares no code with the module or the list's readers (hashlib and the `cryptography` library): docs/account-list.md, \"The vectors of seal/\". The commitment to epoch 0 has 32 zero bytes where the list id stands.",
+  "keys": {
+    "TEST-ONLY-python-member": {
+      "pkcs8": "MIGHAgEAMBMGByqGSM49AgEGCCqGSM49AwEHBG0wawIBAQQg7aqu79lDWgHBWuQo3Vu5R8YbDWj2QYllfAuLVxEmhhuhRANCAATvJlT7A0QplzU15d3P6fddlP7mIH5RX7tS3rN5y2l7B2XynDm5ShGCLfLFBMzom8DoMTU2Bd4aSXxvv8ZI8NuE",
+      "spki": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE7yZU-wNEKZc1NeXdz-n3XZT-5iB-UV-7Ut6zectpewdl8pw5uUoRgi3yxQTM6JvA6DE1NgXeGkl8b7_GSPDbhA"
+    }
+  },
+  "wrap": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "epoch": 0,
+    "commitment": "05b55980ed2eed9247771e8657ecc4c895624fd0f8f9731861e95aaaa1505ea8",
+    "member": "TEST-ONLY-python-member",
+    "text": "AUU7EJfvu8GUudj5YclBYZ38sZRdqL84nhIUySOjhKbHtEjkug-Vn9inyITO1TseuDz2rRJnPT5hfrIqCceJO4wDr4xrEk_7hQATzam7DO4bXz7cD2iwM2Esqj_TXHNAETCsTpMP5CodwcIsek8myWI"
+  },
+  "expect": {
+    "key": "bd8dfa7e49e0022ca7a4e128df2ff6f52dad8001341420fe7cf99b1a6593ef97"
+  }
+}

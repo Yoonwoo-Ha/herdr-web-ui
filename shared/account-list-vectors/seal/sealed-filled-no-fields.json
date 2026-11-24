@@ -1,0 +1,16 @@
+{
+  "name": "sealed-filled-no-fields",
+  "note": "Nothing but the field that fills it.",
+  "sealed": {
+    "list": "477baceda68c821e84d19a77ee733a897a6735b4857320725a6f9559669f8505",
+    "seq": 7,
+    "epoch": {
+      "epoch": 2,
+      "key": "2fa00c28d4ee2a5999e129d3cf60c3f4c8f5af081d6da74f92a4cc6c67e66bb0"
+    },
+    "bytes": "AVTIjynx_vcBC4xA9YSEanthxIbZUZEnFQ_WviI6NuYrTrCJ6frYQIVYtyKQkqy5Gi0g6AHQM94OdEs_f8wS69v95zHgZ6znwRQOCZlMRM7SmX7ATIb2S2Rcf3RmwBTV-Q54taoYti7iMvmuXUyoewLLx4p1i0R--6F_uXhCUCO6bptVz7_KifTO4D7Tlc93muIcTrA61s_U98J7QjAHQFq5JhsTuLDTg96pbvDXtyfWGxfZs7-T1vFdaVtJbaW_lOqSW-Rp1gdrxooUFvedJaY0AFYdSu6qv_D60ooWvKjZK6aYIwyxpbr_0WFThByOJJX38G7dBx3yhMNvCDLgjbMqRxSPN366ohQqZaNGsKRmKJLlh-WnKzILs8yb"
+  },
+  "expect": {
+    "fields": []
+  }
+}
