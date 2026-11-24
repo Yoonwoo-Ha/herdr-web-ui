@@ -1,0 +1,12 @@
+{
+  "name": "line-challenge",
+  "note": "TEST-ONLY keys. The challenge of a PC's card for a list, which an invite's line signs in a message of its own (line-proof.json) to say that this PC joins this list with it.",
+  "list": "1e02680cc5e01ec2c5c7ebaf0a37a1007dd79352492b040879f664cfc142d54c",
+  "card": {
+    "key": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAE5lhuexKpDRsxAK4WTOjTQTjBurzk0iGngvCpNGetUiwtppuB-SgVWvMwkHCQe6FNPoAzLJZntcFyjzv0sk82Bg",
+    "enc": "MFkwEwYHKoZIzj0CAQYIKoZIzj0DAQcDQgAEVMfhqT7llP9gRR8DB4RLbsL-kQmlkQnKxvJUV6DKvpBKDyennnEbD6f1HOM687iSzBnjcltJ9OLFSM_Tcbr2rw",
+    "endpoint": "abababababababababababababababababababababababababababababababab"
+  },
+  "binding_hex": "df680d76bc189441d6112d0cdf59d955357363d16245cb12cf860a939ef44e46",
+  "challenge": "ef60ad8e971e3991fcbcc7b586c5fc8a"
+}

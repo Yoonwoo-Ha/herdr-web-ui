@@ -953,6 +953,28 @@ invite's public key as [a key](#the-form), where a listing id does. `challenge` 
 account service gave, as its UTF-8 bytes. Half of a surrogate pair alone has no such bytes (it
 would be written as U+FFFD, the bytes of another text), so a challenge that holds one is refused.
 
+**What a line signs for a PC's card** (`lineProofBytes`, `lineChallenge`). A line can also say
+that one particular PC joins one particular list with it. It signs a message of its own:
+
+```
+"ovis-list-line/1" || account || server_id || the PC's relay key || challenge
+                      each of the four after its length, 4 bytes big-endian
+
+challenge = the first 32 hex digits of
+            SHA-256( "ovis-list-join/1" || list id, as its text || the binding of the PC's card )
+```
+
+The card is the PC's own for that list, with its relay key and no invite named, and its binding is
+SHA-256 over the card's bytes ([A card](#a-card)). So the signature names the account, the PC's id
+and relay key, the list, and the very keys the PC asks to be added with. The line works the
+message out from the card it is given: nobody hands it a challenge to sign. It is no redeem
+message, and that matters. A redeem signature is over a challenge the account service chooses, so
+if the two were one message, an account service that lies could hand a PC the challenge of a card
+of its own to redeem with, and hold the line's word for keys the PC never had. With a tag of its
+own, nothing else the invite's key signs stands in for it, and it redeems nothing. The vectors are
+`invite/line-challenge.json` and `invite/line-proof.json`: every reader (the PC, the app, the
+account service) builds and checks the message with these functions (`verifyLineProof`).
+
 ## On a device
 
 The hosted app, in a browser at app.ovis.sh and in the phone apps, keeps its own copy of its
@@ -1636,7 +1658,9 @@ the `line`, the `key` the signature is checked under (the key the line reads to,
 files that change it, which name that one as `key_of_line`), the `redeem` values, a `signature`,
 and `expect.verifies`; every file whose values are in form (all but `redeem-server-id-uppercase`)
 has their `bytes` (base64url) and `bytes_hex`. Each `make-proof` file has the `make` values, their
-`bytes`, the device's key as `device_key`, and a `signature` by it.
+`bytes`, the device's key as `device_key`, and a `signature` by it. `line-challenge` has a `list`,
+a PC's `card`, the card's `binding_hex` and the `challenge`; `line-proof` has those with the
+`account`, the PC's `server_id`, the message's `bytes_hex`, the invite's `key` and its `signature`.
 
 Each file of [`shared/account-list-vectors/kinds/`](../shared/account-list-vectors/kinds) is a list
 from entry 0: `name`, `level` (the member's), `keys`, `entries` as above (`sealed` is shown as
